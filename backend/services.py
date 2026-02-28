@@ -1,6 +1,7 @@
 import os
 import httpx
 import logging
+from supabase import Client
 
 logger = logging.getLogger(__name__)
 
@@ -97,3 +98,131 @@ async def get_census_data(lat: float, lng: float):
         except httpx.HTTPError as e:
             logger.error(f"Census/FCC API error: {str(e)}")
             return {"error": f"API request failed: {str(e)}"}
+
+async def get_census_from_postgis(lat: float, lng: float, supabase_client: Client):
+    """
+    Fast PostGIS spatial lookup: finds which census tract polygon contains
+    the given point and returns cached demographic data.
+    Falls back to None if not found (caller should use live API as fallback).
+    """
+    try:
+        # Call the Supabase RPC which runs:
+        # SELECT name, population, median_income FROM census_tracts
+        # WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(lng, lat), 4326))
+        res = supabase_client.rpc("get_tract_for_point", {
+            "p_lat": lat,
+            "p_lng": lng
+        }).execute()
+
+        if res.data and len(res.data) > 0:
+            row = res.data[0]
+            return {
+                "name": row.get("name"),
+                "population": row.get("population"),
+                "median_income": row.get("median_income"),
+                "geoid": row.get("geoid"),
+                "source": "postgis"
+            }
+        else:
+            logger.info("PostGIS census lookup: no tract found for point, will fall back to live API.")
+            return None
+
+    except Exception as e:
+        logger.error(f"PostGIS census lookup error: {str(e)}")
+        return None
+
+
+FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
+
+async def get_crime_data(lat: float, lng: float, radius: int = 1500):
+    """
+    Fetch recent crime incidents from Seattle Open Data Portal (Socrata API).
+    Returns incident counts by category within the radius.
+    No API key required.
+    """
+    # Socrata SoQL: filter by geo circle and last 12 months
+    # Dataset: Seattle Police Department Incident Reports 2008-Present
+    url = "https://data.seattle.gov/resource/tazs-3rd5.json"
+    from datetime import datetime, timedelta
+    one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%dT00:00:00")
+
+    params = {
+        "$where": f"within_circle(longitude,{lng},{lat},{radius}) AND offense_start_datetime >= '{one_year_ago}'",
+        "$limit": 1000,
+        "$select": "report_number,offense_parent_group,offense_start_datetime,longitude,latitude"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, params=params, timeout=15.0)
+            response.raise_for_status()
+            data = response.json()
+
+            # Aggregate by category
+            categories: dict = {}
+            incidents = []
+            for item in data:
+                cat = item.get("offense_parent_group", "Other")
+                categories[cat] = categories.get(cat, 0) + 1
+                if item.get("longitude") and item.get("latitude"):
+                    incidents.append({
+                        "lat": float(item["latitude"]),
+                        "lng": float(item["longitude"]),
+                        "category": cat,
+                        "date": item.get("offense_start_datetime", "")[:10]
+                    })
+
+            # Sort categories by count
+            top_categories = sorted(categories.items(), key=lambda x: x[1], reverse=True)
+
+            return {
+                "total_incidents": len(data),
+                "categories": [{"name": k, "count": v} for k, v in top_categories[:5]],
+                "incidents": incidents[:200]  # Cap for response size
+            }
+        except httpx.HTTPError as e:
+            logger.error(f"Seattle Crime API error: {str(e)}")
+            return {"error": f"Crime data request failed: {str(e)}"}
+
+async def get_foursquare_pois(lat: float, lng: float, radius: int = 1500):
+    """Fetch Places from Foursquare Places API (v3)."""
+    if not FOURSQUARE_API_KEY:
+        logger.warning("FOURSQUARE_API_KEY not set.")
+        return {"error": "Foursquare API key not configured"}
+
+    url = "https://api.foursquare.com/v3/places/search"
+    headers = {
+        "Authorization": FOURSQUARE_API_KEY,
+        "accept": "application/json"
+    }
+    params = {
+        "ll": f"{lat},{lng}",
+        "radius": radius,
+        "limit": 50,
+        "sort": "DISTANCE",
+        # Broad top-level category IDs: food, shops, arts, fitness, travel
+        "categories": "13000,17000,10000,18000,19000"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers, params=params, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+            places = data.get("results", [])
+            return {
+                "total": len(places),
+                "places": [{
+                    "fsq_id": p.get("fsq_id"),
+                    "name": p.get("name"),
+                    "categories": [c.get("name") for c in p.get("categories", [])],
+                    "distance": p.get("distance"),
+                    "lat": p.get("geocodes", {}).get("main", {}).get("latitude"),
+                    "lng": p.get("geocodes", {}).get("main", {}).get("longitude"),
+                    "rating": p.get("rating"),
+                } for p in places]
+            }
+        except httpx.HTTPError as e:
+            logger.error(f"Foursquare API error: {str(e)}")
+            return {"error": f"Foursquare request failed: {str(e)}"}
+

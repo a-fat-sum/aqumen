@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import os
 import asyncio
 from dotenv import load_dotenv
-from services import get_yelp_data, get_osm_data, get_census_data
+from services import get_yelp_data, get_osm_data, get_census_data, get_census_from_postgis, get_crime_data, get_foursquare_pois
 
 load_dotenv()
 
@@ -131,10 +131,44 @@ async def get_osm_endpoint(location: LocationRequest):
 
 @app.post("/api/report/census")
 async def get_census_endpoint(location: LocationRequest):
-    census_response = await get_census_data(location.lat, location.lng)
     population = "N/A"
     median_income = "N/A"
     tract_name = "N/A"
+
+    # --- Step 1: Try fast PostGIS spatial lookup first ---
+    postgis_result = await get_census_from_postgis(location.lat, location.lng, supabase)
+
+    if postgis_result and postgis_result.get("population") is not None:
+        # We have geometry + demographics from the DB (after a backfill script runs)
+        raw_pop = postgis_result.get("population")
+        raw_inc = postgis_result.get("median_income")
+        raw_name = postgis_result.get("name", "N/A")
+
+        try:
+            pop_val = int(raw_pop)
+            population = pop_val if pop_val >= 0 else "N/A"
+        except (ValueError, TypeError):
+            pass
+        try:
+            inc_val = int(raw_inc)
+            median_income = inc_val if inc_val >= 0 else "N/A"
+        except (ValueError, TypeError):
+            pass
+        if raw_name:
+            tract_name = f"Tract {raw_name}"
+
+        return {
+            "metrics": {
+                "census_population": population,
+                "census_median_income": median_income,
+                "census_tract_name": tract_name,
+                "census_source": "postgis_db"
+            },
+            "raw_data": { "census": postgis_result }
+        }
+
+    # --- Step 2: Fallback to live Census API if PostGIS missed or demographics are empty ---
+    census_response = await get_census_data(location.lat, location.lng)
     
     if isinstance(census_response, dict) and "error" not in census_response:
         raw_pop = census_response.get("B01003_001E")
@@ -162,7 +196,35 @@ async def get_census_endpoint(location: LocationRequest):
         "metrics": {
             "census_population": population,
             "census_median_income": median_income,
-            "census_tract_name": tract_name
+            "census_tract_name": tract_name,
+            "census_source": "live_api"
         },
         "raw_data": { "census": census_response }
+    }
+
+
+
+@app.post("/api/report/crime")
+async def get_crime_endpoint(location: LocationRequest):
+    result = await get_crime_data(location.lat, location.lng, radius=location.radius)
+    if "error" in result:
+        return {"metrics": {}, "raw_data": {"crime": result}}
+    return {
+        "metrics": {
+            "crime_total_incidents": result.get("total_incidents", 0),
+            "crime_top_categories": result.get("categories", []),
+        },
+        "raw_data": {"crime": result}
+    }
+
+@app.post("/api/report/foursquare")
+async def get_foursquare_endpoint(location: LocationRequest):
+    result = await get_foursquare_pois(location.lat, location.lng, radius=location.radius)
+    if "error" in result:
+        return {"metrics": {}, "raw_data": {"foursquare": result}}
+    return {
+        "metrics": {
+            "foursquare_total": result.get("total", 0),
+        },
+        "raw_data": {"foursquare": result.get("places", [])}
     }

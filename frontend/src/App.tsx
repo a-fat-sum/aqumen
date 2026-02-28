@@ -2,7 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import Map, { Marker, Source, Layer, ScaleControl } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent, MapRef } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal, Shield, Bike, Train } from 'lucide-react';
 import * as turf from '@turf/turf';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -35,18 +35,27 @@ function App() {
     commercial: true,
     transit: true,
     parks: true,
-    civic: true
+    civic: true,
+    crime: false,
+    lightRail: true,
+    isochrone: false
   });
+  const [isochrone, setIsochrone] = useState<any>(null);
+  const [crimeData, setCrimeData] = useState<any>(null);
+  const [foursquarePois, setFoursquarePois] = useState<any[]>([]);
 
   const handleMapClick = (evt: MapLayerMouseEvent) => {
     setPinData({
       lng: evt.lngLat.lng,
       lat: evt.lngLat.lat
     });
-    setReportData(null); // Clear previous report when new pin drops
+    setReportData(null);
     setMapboxPois([]);
+    setIsochrone(null);
+    setCrimeData(null);
+    setFoursquarePois([]);
     setError(null);
-    setPoiPage(0); // Reset pagination
+    setPoiPage(0);
   };
 
   const handleResetMap = () => {
@@ -54,6 +63,9 @@ function App() {
     setPinData(null);
     setReportData(null);
     setMapboxPois([]);
+    setIsochrone(null);
+    setCrimeData(null);
+    setFoursquarePois([]);
     setError(null);
     setRadius(1500);
     setPoiPage(0);
@@ -108,10 +120,17 @@ function App() {
       }
     }
 
-    // 2. Fire Decomposed Backend Requests
+    // 2. Fire Decomposed Backend + Isochrone Requests in parallel
     const headers = { 'Content-Type': 'application/json' };
     const body = JSON.stringify({ ...pinData, radius });
     const baseUrl = import.meta.env.VITE_API_URL;
+
+    // Isochrone: 5, 10, 15 min walking contours (Mapbox API, no backend needed)
+    const fetchIsochrone = fetch(
+      `https://api.mapbox.com/isochrone/v1/mapbox/walking/${pinData.lng},${pinData.lat}?contours_minutes=5,10,15&contours_colors=ade8f4,0096c7,023e8a&polygons=true&access_token=${MAPBOX_TOKEN}`
+    ).then(r => r.json()).then(data => {
+      if (data?.features) setIsochrone(data);
+    }).catch(e => console.error('Isochrone error:', e));
 
     const fetchYelp = fetch(`${baseUrl}/api/report/yelp`, { method: 'POST', headers, body })
       .then(res => res.json())
@@ -143,8 +162,20 @@ function App() {
         }));
       });
 
+    const fetchCrime = fetch(`${baseUrl}/api/report/crime`, { method: 'POST', headers, body })
+      .then(res => res.json())
+      .then(data => {
+        if (data?.raw_data?.crime) setCrimeData(data.raw_data.crime);
+      }).catch(e => console.error('Crime data error:', e));
+
+    const fetchFoursquare = fetch(`${baseUrl}/api/report/foursquare`, { method: 'POST', headers, body })
+      .then(res => res.json())
+      .then(data => {
+        if (data?.raw_data?.foursquare) setFoursquarePois(data.raw_data.foursquare);
+      }).catch(e => console.error('Foursquare error:', e));
+
     try {
-      await Promise.allSettled([fetchYelp, fetchOsm, fetchCensus]);
+      await Promise.allSettled([fetchIsochrone, fetchYelp, fetchOsm, fetchCensus, fetchCrime, fetchFoursquare]);
     } catch (err: any) {
       setError("Some data sources failed to load.");
       console.error(err);
@@ -163,7 +194,25 @@ function App() {
     // Add Mapbox POIs first
     mapboxPois.forEach(p => mergedDict.set(p.name.toLowerCase(), p));
 
-    // Override with Yelp POIs (since Yelp has ratings)
+    // Add Foursquare POIs (enriches coverage)
+    foursquarePois.forEach((p: any) => {
+      if (p.name && p.lat && p.lng) {
+        const key = p.name.toLowerCase();
+        if (!mergedDict.has(key)) {
+          mergedDict.set(key, {
+            id: `fsq-${p.fsq_id}`,
+            name: p.name,
+            categories: (p.categories || []).map((c: string) => ({ title: c })),
+            rating: p.rating || 'N/A',
+            distance: p.distance,
+            lng: p.lng,
+            lat: p.lat
+          });
+        }
+      }
+    });
+
+    // Override with Yelp POIs (since Yelp has detailed ratings)
     yelpBusinesses.forEach((bz: any) => {
       mergedDict.set(bz.name.toLowerCase(), {
         id: bz.id,
@@ -237,29 +286,33 @@ function App() {
                 <div className="mb-5 bg-white p-3 rounded-md border border-gray-100 shadow-sm">
                   <h5 className="text-xs font-semibold text-gray-700 mb-2">Map Layers</h5>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => setShowFilters(f => ({ ...f, commercial: !f.commercial }))}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.commercial ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}
-                    >
+                    <button onClick={() => setShowFilters(f => ({ ...f, commercial: !f.commercial }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.commercial ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}>
                       <Store className="w-3 h-3" /> Commercial
                     </button>
-                    <button
-                      onClick={() => setShowFilters(f => ({ ...f, transit: !f.transit }))}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.transit ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-gray-200'}`}
-                    >
+                    <button onClick={() => setShowFilters(f => ({ ...f, transit: !f.transit }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.transit ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-gray-200'}`}>
                       <Bus className="w-3 h-3" /> Transit
                     </button>
-                    <button
-                      onClick={() => setShowFilters(f => ({ ...f, parks: !f.parks }))}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.parks ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-gray-500 border-gray-200'}`}
-                    >
+                    <button onClick={() => setShowFilters(f => ({ ...f, parks: !f.parks }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.parks ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-gray-500 border-gray-200'}`}>
                       <TreePine className="w-3 h-3" /> Parks
                     </button>
-                    <button
-                      onClick={() => setShowFilters(f => ({ ...f, civic: !f.civic }))}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.civic ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-gray-500 border-gray-200'}`}
-                    >
+                    <button onClick={() => setShowFilters(f => ({ ...f, civic: !f.civic }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.civic ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-gray-500 border-gray-200'}`}>
                       <BookOpen className="w-3 h-3" /> Civic
+                    </button>
+                    <button onClick={() => setShowFilters(f => ({ ...f, crime: !f.crime }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.crime ? 'bg-red-100 text-red-600 border-red-200' : 'bg-white text-gray-500 border-gray-200'}`}>
+                      <Shield className="w-3 h-3" /> Crime
+                    </button>
+                    <button onClick={() => setShowFilters(f => ({ ...f, isochrone: !f.isochrone }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.isochrone ? 'bg-sky-100 text-sky-700 border-sky-200' : 'bg-white text-gray-500 border-gray-200'}`}>
+                      <Bike className="w-3 h-3" /> Walkshed
+                    </button>
+                    <button onClick={() => setShowFilters(f => ({ ...f, lightRail: !f.lightRail }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.lightRail ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-gray-200'}`}>
+                      <Train className="w-3 h-3" /> Light Rail
                     </button>
                   </div>
                 </div>
@@ -410,6 +463,72 @@ function App() {
                   </div>
                 </div>
               )}
+              {/* Aqumen Walkability Index Card (computed from existing data) */}
+              {reportData && (() => {
+                const osmElements = reportData.raw_data?.osm || [];
+                const poisCount = mergedPois.length;
+                const transitCount = osmElements.filter((n: any) => n.tags?.highway === 'bus_stop' || n.tags?.railway === 'station').length;
+                const parksCount = osmElements.filter((n: any) => n.tags?.leisure === 'park').length;
+                const foursquareCount = foursquarePois.length;
+
+                // Scoring: weighted 0-100
+                const poiScore = Math.min(poisCount * 2.5, 40);        // up to 40pts for dense POIs
+                const fsqScore = Math.min(foursquareCount * 1.5, 15);  // up to 15pts for Foursquare density
+                const transitScore = Math.min(transitCount * 4, 25);   // up to 25pts for transit access
+                const parksScore = Math.min(parksCount * 5, 10);       // up to 10pts for parks
+                const isoScore = isochrone ? 10 : 0;                   // 10pts if isochrone computed (dense enough)
+                const total = Math.round(Math.min(poiScore + fsqScore + transitScore + parksScore + isoScore, 100));
+
+                const label = total >= 85 ? 'Walker\'s Paradise' : total >= 70 ? 'Very Walkable' : total >= 50 ? 'Somewhat Walkable' : total >= 25 ? 'Car Dependent' : 'Very Car Dependent';
+                const barColor = total >= 70 ? 'bg-emerald-500' : total >= 50 ? 'bg-yellow-400' : 'bg-red-400';
+
+                return (
+                  <div className="mt-4 bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+                    <h4 className="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                      <Bike className="w-4 h-4 text-sky-500" /> Aqumen Walkability Index
+                    </h4>
+                    <div className="flex items-end gap-3 mb-2">
+                      <span className="text-4xl font-bold text-blue-600">{total}</span>
+                      <span className="text-sm font-medium text-gray-600 mb-1">/100 · {label}</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2 mb-3">
+                      <div className={`${barColor} h-2 rounded-full transition-all duration-700`} style={{ width: `${total}%` }} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
+                      <span>🏪 POIs nearby: <strong>{poisCount}</strong></span>
+                      <span>🚌 Transit stops: <strong>{transitCount}</strong></span>
+                      <span>🌳 Parks: <strong>{parksCount}</strong></span>
+                      <span>📍 Foursquare: <strong>{foursquareCount}</strong></span>
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* Crime Data Card */}
+              {crimeData && !crimeData.error && (
+                <div className="mt-4 bg-white rounded-lg border border-red-100/60 shadow-sm p-4">
+                  <h4 className="text-sm font-semibold text-gray-800 mb-1 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-red-500" /> Safety — Last 12 Months
+                  </h4>
+                  <p className="text-xs text-gray-500 mb-3">{crimeData.total_incidents} incidents within {radius}m</p>
+                  <div className="space-y-1.5">
+                    {crimeData.categories?.map((cat: any) => {
+                      const pct = crimeData.total_incidents > 0 ? Math.round((cat.count / crimeData.total_incidents) * 100) : 0;
+                      return (
+                        <div key={cat.name}>
+                          <div className="flex justify-between text-xs mb-0.5">
+                            <span className="text-gray-700 truncate max-w-[70%]">{cat.name}</span>
+                            <span className="text-gray-500 font-mono">{cat.count}</span>
+                          </div>
+                          <div className="w-full bg-red-50 rounded-full h-1.5">
+                            <div className="bg-red-400 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-2">Source: Seattle Open Data. Enable Crime layer to see map pins.</p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-16 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl mt-4">
@@ -466,6 +585,41 @@ function App() {
               <Marker longitude={pinData.lng} latitude={pinData.lat} anchor="bottom">
                 <MapPin className="text-red-500 h-10 w-10 drop-shadow-lg -ml-5 -mt-10" strokeWidth={2.5} fill="white" />
               </Marker>
+            )}
+
+            {/* Isochrone walkshed polygons (5, 10, 15 min walk) */}
+            {isochrone && showFilters.isochrone && (
+              <Source id="isochrone-source" type="geojson" data={isochrone}>
+                <Layer
+                  id="isochrone-fill"
+                  type="fill"
+                  paint={{
+                    'fill-color': ['get', 'color'],
+                    'fill-opacity': 0.18
+                  }}
+                />
+                <Layer
+                  id="isochrone-line"
+                  type="line"
+                  paint={{ 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.6 }}
+                />
+              </Source>
+            )}
+
+            {/* Sound Transit Light Rail — static GeoJSON from public folder */}
+            {showFilters.lightRail && (
+              <Source id="light-rail-source" type="geojson" data="/link_light_rail.geojson">
+                <Layer
+                  id="light-rail-line"
+                  type="line"
+                  filter={['==', ['get', 'feature_type'], 'route']}
+                  paint={{
+                    'line-color': ['coalesce', ['get', 'route_color'], '#00A550'],
+                    'line-width': 3.5,
+                    'line-opacity': 0.85
+                  }}
+                />
+              </Source>
             )}
 
             {/* Business Markers */}
@@ -569,6 +723,20 @@ function App() {
                 </Marker>
               );
             })}
+
+            {/* Crime Incident Markers */}
+            {showFilters.crime && crimeData?.incidents?.map((incident: any, i: number) => (
+              <Marker key={`crime-${i}`} longitude={incident.lng} latitude={incident.lat} anchor="center">
+                <div className="group relative cursor-pointer">
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-500 border border-white opacity-70 hover:opacity-100 transition-opacity" />
+                  <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[160px] bg-gray-900 text-white text-xs p-1.5 rounded shadow-xl z-50">
+                    <p className="font-semibold">{incident.category}</p>
+                    <p className="text-gray-300">{incident.date}</p>
+                    <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45" />
+                  </div>
+                </div>
+              </Marker>
+            ))}
           </Map>
         ) : (
           <div className="flex items-center justify-center h-full">
