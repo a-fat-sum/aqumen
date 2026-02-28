@@ -57,3 +57,43 @@ async def get_osm_data(lat: float, lng: float, radius: int = 1500):
         except httpx.HTTPError as e:
             logger.error(f"OSM API error: {str(e)}")
             return {"error": f"OSM API request failed: {str(e)}"}
+
+async def get_census_data(lat: float, lng: float):
+    # 1. Convert Lat/Lng to Census FIPS via FCC API
+    fcc_url = f"https://geo.fcc.gov/api/census/block/find?latitude={lat}&longitude={lng}&format=json"
+    
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        try:
+            res = await client.get(fcc_url, timeout=10.0)
+            res.raise_for_status()
+            data = res.json()
+            
+            state_fips = data.get("State", {}).get("FIPS")
+            county_fips = data.get("County", {}).get("FIPS")
+            
+            if county_fips and len(county_fips) == 5:
+                county_fips = county_fips[2:]
+                
+            block_fips = data.get("Block", {}).get("FIPS")
+            tract_fips = block_fips[5:11] if block_fips else None
+            
+            if not (state_fips and county_fips and tract_fips):
+                return {"error": "Could not map coordinates to Census tract"}
+            
+            # 2. Get Demographics from US Census (ACS 2022 5-year)
+            # B01003_001E: Total Population, B19013_001E: Median Household Income
+            census_url = f"https://api.census.gov/data/2022/acs/acs5?get=NAME,B01003_001E,B19013_001E&for=tract:{tract_fips}&in=state:{state_fips}+county:{county_fips}"
+            res2 = await client.get(census_url, timeout=10.0)
+            res2.raise_for_status()
+            
+            census_json = res2.json()
+            if isinstance(census_json, list) and len(census_json) > 1:
+                keys = census_json[0]
+                values = census_json[1]
+                return dict(zip(keys, values))
+            else:
+                return {"error": "Empty or malformed Census response"}
+                
+        except httpx.HTTPError as e:
+            logger.error(f"Census/FCC API error: {str(e)}")
+            return {"error": f"API request failed: {str(e)}"}
