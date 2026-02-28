@@ -47,6 +47,7 @@ def process_and_upload():
     print(f"Found {len(king_county)} tracts in King County. Preparing to upload to Supabase.")
     
     # Convert geometries to GeoJSON format for the Supabase RPC
+    total_tracts = len(king_county)
     inserted = 0
     records = []
     
@@ -54,26 +55,22 @@ def process_and_upload():
         # Shapely geometry to GeoJSON
         geojson_geom = mapping(row.geometry)
         
-        records.append({
-            "geoid": row['GEOID'],
-            "state_fips": row['STATEFP'],
-            "county_fips": row['COUNTYFP'],
-            "tract_fips": row['TRACTCE'],
-            "name": row['NAME'],
-            # Note: Population & Income are usually populated from a separate ACS API pull 
-            # or we can write a script to backfill these later. For now, we seed the geometry.
-            "population": None,
-            "median_income": None,
-            "geom": geojson_geom # We will need a specialized insert mechanism for PostGIS
-        })
+        print(f"[{idx+1}/{total_tracts}] Uploading Tract {row['GEOID']} ({row['NAME']})")
+        
+        try:
+            res = supabase.rpc("insert_census_tract", {
+                "p_geoid": row['GEOID'],
+                "p_state_fips": row['STATEFP'],
+                "p_county_fips": row['COUNTYFP'],
+                "p_tract_fips": row['TRACTCE'],
+                "p_name": row['NAME'],
+                "p_geojson": geojson_geom
+            }).execute()
+            inserted += 1
+        except Exception as e:
+            print(f"Failed to insert {row['GEOID']}: {e}")
 
-    print("Sample record prepared:")
-    print(records[0]["geoid"], records[0]["name"])
-    
-    # Due to Supabase REST limitations with complex PostGIS multi-polygons, 
-    # we typically need to run an RPC wrapper to decode GeoJSON -> PostGIS Geometry.
-    print("\n⚠️ Note: Native Supabase client insert() doesn't automatically convert GeoJSON to PostGIS Geometries.")
-    print("You'll need an RPC helper in Supabase to insert these cleanly. See implementation plan.")
+    print(f"\n✅ Successfully inserted {inserted}/{total_tracts} Census Tracts into Supabase PostGIS.")
 
 if __name__ == "__main__":
     if not os.path.exists("tmp_shapefiles"):

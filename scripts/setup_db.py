@@ -51,6 +51,38 @@ def setup_database():
     CREATE INDEX IF NOT EXISTS census_tracts_geom_idx
         ON census_tracts
         USING GIST (geom);
+        
+    -- 4. Create an RPC function to securely parse GeoJSON inserts from Python
+    CREATE OR REPLACE FUNCTION insert_census_tract(
+        p_geoid VARCHAR,
+        p_state_fips VARCHAR,
+        p_county_fips VARCHAR,
+        p_tract_fips VARCHAR,
+        p_name VARCHAR,
+        p_geojson JSONB
+    )
+    RETURNS void
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    AS $$
+    BEGIN
+        INSERT INTO census_tracts (
+            geoid, state_fips, county_fips, tract_fips, name, geom
+        )
+        VALUES (
+            p_geoid,
+            p_state_fips,
+            p_county_fips,
+            p_tract_fips,
+            p_name,
+            -- PostGIS magic to cast the GeoJSON dict into an actual spatial polygon
+            ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(p_geojson::text), 4326))
+        )
+        ON CONFLICT (geoid) DO UPDATE SET
+            geom = EXCLUDED.geom,
+            name = EXCLUDED.name;
+    END;
+    $$;
     """
     
     print("\n" + "="*50)

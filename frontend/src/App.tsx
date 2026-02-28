@@ -76,11 +76,14 @@ function App() {
     if (mapRef.current) {
       try {
         const mapboxMap = mapRef.current.getMap();
-        const features = mapboxMap.queryRenderedFeatures({ layers: ['poi-label'] });
+        // Query all POI/icon/symbol layers rather than just poi-label
+        const features = mapboxMap.queryRenderedFeatures();
 
         const uniqueMapboxPois = new globalThis.Map<string, any>();
         features.forEach(f => {
-          if (f.geometry.type === 'Point' && f.properties?.name) {
+          // Native mapbox markers typically have a point geometry and name, or are in specific layers
+          const isPoiLayer = f.layer?.id?.includes('poi') || f.layer?.id?.includes('label') || f.layer?.id?.includes('place');
+          if (isPoiLayer && f.geometry.type === 'Point' && f.properties?.name) {
             // @ts-ignore Turf types with Mapbox GeoJSON
             const dist = turf.distance([pinData.lng, pinData.lat], f.geometry.coordinates, { units: 'meters' });
             if (dist <= radius) {
