@@ -22,7 +22,7 @@ function App() {
   const [reportData, setReportData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // New UI States
   const [radius, setRadius] = useState<number>(1500); // 1.5km default
   const [poiPage, setPoiPage] = useState<number>(0);
@@ -96,7 +96,7 @@ function App() {
                   <p className="text-xs text-blue-700 font-mono">Lat: {pinData.lat.toFixed(4)}, Lng: {pinData.lng.toFixed(4)}</p>
                 </div>
               </div>
-              
+
               {/* Radius Configuration */}
               <div className="mb-5 bg-white p-3 rounded-md border border-blue-100/50 shadow-sm">
                 <div className="flex justify-between items-center mb-2">
@@ -106,12 +106,12 @@ function App() {
                   </label>
                   <span className="text-xs font-bold text-blue-600">{radius} meters</span>
                 </div>
-                <input 
-                  type="range" 
-                  min="500" 
-                  max="3000" 
+                <input
+                  type="range"
+                  min="500"
+                  max="3000"
                   step="100"
-                  value={radius} 
+                  value={radius}
                   onChange={(e) => setRadius(parseInt(e.target.value))}
                   className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
@@ -140,7 +140,7 @@ function App() {
               {reportData && (
                 <div className="mt-8">
                   <h4 className="font-bold text-gray-800 border-b pb-2 mb-4">Micro-Locality Analysis</h4>
-                  
+
                   <div className="space-y-4">
                     {/* Commercial Meta */}
                     <div className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm">
@@ -183,16 +183,16 @@ function App() {
                         <div className="bg-purple-50/50 p-3 rounded-md border border-purple-100/50">
                           <p className="text-[10px] text-purple-600 font-bold uppercase tracking-wider mb-1">Population</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_population !== "N/A" 
-                              ? Number(reportData.metrics?.census_population).toLocaleString() 
+                            {reportData.metrics?.census_population !== "N/A"
+                              ? Number(reportData.metrics?.census_population).toLocaleString()
                               : "N/A"}
                           </p>
                         </div>
                         <div className="bg-emerald-50/50 p-3 rounded-md border border-emerald-100/50">
                           <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-1">Median Income</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_median_income !== "N/A" 
-                              ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}` 
+                            {reportData.metrics?.census_median_income !== "N/A"
+                              ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}`
                               : "N/A"}
                           </p>
                         </div>
@@ -211,11 +211,11 @@ function App() {
                             {poiPage * POIS_PER_PAGE + 1}-{Math.min((poiPage + 1) * POIS_PER_PAGE, reportData.raw_data.yelp.length)} of {reportData.raw_data.yelp.length}
                           </span>
                         </div>
-                        
+
                         <div className="space-y-2">
                           {reportData.raw_data.yelp
                             .slice(poiPage * POIS_PER_PAGE, (poiPage + 1) * POIS_PER_PAGE)
-                            .map((bz: any, idx: number) => (
+                            .map((bz: any) => (
                               <div key={bz.id} className="bg-white border border-gray-200 p-3 rounded-md shadow-sm flex items-start justify-between">
                                 <div>
                                   <p className="font-bold text-gray-800 text-sm leading-tight">{bz.name}</p>
@@ -228,11 +228,11 @@ function App() {
                               </div>
                             ))}
                         </div>
-                        
+
                         {/* Pagination Controls */}
                         {reportData.raw_data.yelp.length > POIS_PER_PAGE && (
                           <div className="flex justify-between items-center mt-3 pt-2 border-t border-gray-50">
-                            <button 
+                            <button
                               onClick={() => setPoiPage(p => Math.max(0, p - 1))}
                               disabled={poiPage === 0}
                               className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
@@ -240,7 +240,7 @@ function App() {
                               <ChevronLeft className="w-5 h-5" />
                             </button>
                             <span className="text-xs font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Page {poiPage + 1}</span>
-                            <button 
+                            <button
                               onClick={() => setPoiPage(p => Math.min(Math.ceil(reportData.raw_data.yelp.length / POIS_PER_PAGE) - 1, p + 1))}
                               disabled={(poiPage + 1) * POIS_PER_PAGE >= reportData.raw_data.yelp.length}
                               className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
@@ -289,15 +289,15 @@ function App() {
           >
             {/* Draw Radius Circle if pin is dropped */}
             {pinData && (
-              <Source id="radius-source" type="geojson" data={turf.circle([pinData.lng, pinData.lat], radius, {steps: 64, units: 'meters'})}>
-                <Layer 
-                  id="radius-layer-fill" 
-                  type="fill" 
+              <Source id="radius-source" type="geojson" data={turf.circle([pinData.lng, pinData.lat], radius, { steps: 64, units: 'meters' })}>
+                <Layer
+                  id="radius-layer-fill"
+                  type="fill"
                   paint={{ 'fill-color': '#3b82f6', 'fill-opacity': 0.1 }}
                 />
-                <Layer 
-                  id="radius-layer-line" 
-                  type="line" 
+                <Layer
+                  id="radius-layer-line"
+                  type="line"
                   paint={{ 'line-color': '#3b82f6', 'line-width': 2, 'line-opacity': 0.5, 'line-dasharray': [2, 2] }}
                 />
               </Source>
@@ -361,11 +361,11 @@ function App() {
                 Icon = Bus;
                 bgColor = "bg-teal-100";
                 textColor = "text-teal-700";
-                
+
                 const stopName = node.tags.name || "Transit Stop";
                 const ref = node.tags.ref ? ` #${node.tags.ref}` : '';
                 label = `${stopName}${ref}`;
-                
+
                 const routes = node.tags.route_ref;
                 if (routes) {
                   desc = `Served by routes: ${routes}`;
