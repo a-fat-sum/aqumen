@@ -41,3 +41,6 @@ dist-ssr/
 *.swo
 *~
 .DS_Store
+
+# Scripts temp data
+scripts/tmp_shapefiles/
