@@ -1,8 +1,8 @@
-import { useState, useRef, useMemo } from 'react';
-import Map, { Marker, Source, Layer, ScaleControl } from 'react-map-gl';
+import { useState, useRef, useMemo, useCallback } from 'react';
+import Map, { Marker, Source, Layer, ScaleControl, Popup } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent, MapRef } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal, Shield, Bike, Train } from 'lucide-react';
+import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal, Shield, Bike, Train, Sparkles, Loader2 } from 'lucide-react';
 import * as turf from '@turf/turf';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -43,6 +43,10 @@ function App() {
   const [isochrone, setIsochrone] = useState<any>(null);
   const [crimeData, setCrimeData] = useState<any>(null);
   const [foursquarePois, setFoursquarePois] = useState<any[]>([]);
+  const [hoveredStation, setHoveredStation] = useState<{ lng: number; lat: number; name: string; routes: string[]; colors: string[] } | null>(null);
+  const [businessQuery, setBusinessQuery] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
 
   const handleMapClick = (evt: MapLayerMouseEvent) => {
     setPinData({
@@ -54,6 +58,7 @@ function App() {
     setIsochrone(null);
     setCrimeData(null);
     setFoursquarePois([]);
+    setAnalysisResult(null);
     setError(null);
     setPoiPage(0);
   };
@@ -66,10 +71,14 @@ function App() {
     setIsochrone(null);
     setCrimeData(null);
     setFoursquarePois([]);
+    setAnalysisResult(null);
+    setBusinessQuery('');
     setError(null);
     setRadius(1500);
     setPoiPage(0);
   };
+
+
 
   const generateReport = async () => {
     if (!pinData) return;
@@ -226,7 +235,61 @@ function App() {
     });
 
     return Array.from(mergedDict.values()).sort((a, b) => a.distance - b.distance);
-  }, [reportData, mapboxPois]);
+  }, [reportData, mapboxPois, foursquarePois]);
+
+  // Sets of business names identified by Gemini analysis for map highlighting
+  const competitorNames = useMemo(() =>
+    new Set((analysisResult?.competitors || []).map((c: any) => c.name?.toLowerCase())),
+    [analysisResult]
+  );
+  const complementaryNames = useMemo(() =>
+    new Set((analysisResult?.complementary || []).map((c: any) => c.name?.toLowerCase())),
+    [analysisResult]
+  );
+
+  const handleAnalyze = useCallback(async () => {
+    if (!pinData || !businessQuery.trim() || !reportData) return;
+    setAnalyzing(true);
+    setAnalysisResult(null);
+    const baseUrl = import.meta.env.VITE_API_URL;
+    try {
+      const poisForAnalysis = mergedPois.map((p: any) => ({
+        name: p.name,
+        categories: (p.categories || []).map((c: any) => typeof c === 'string' ? c : (c.title || c.alias || '')),
+        distance: p.distance,
+        rating: p.rating,
+      }));
+      const body = JSON.stringify({
+        lat: pinData.lat,
+        lng: pinData.lng,
+        radius,
+        query: businessQuery.trim(),
+        pois: poisForAnalysis,
+        demographics: reportData.metrics || {},
+        crime: crimeData || {},
+        walkability_score: (() => {
+          const osmElements = reportData.raw_data?.osm || [];
+          const poi = Math.min(mergedPois.length * 2.5, 40);
+          const fsq = Math.min(foursquarePois.length * 1.5, 15);
+          const transit = Math.min(osmElements.filter((n: any) => n.tags?.highway === 'bus_stop' || n.tags?.railway === 'station').length * 4, 25);
+          const parks = Math.min(osmElements.filter((n: any) => n.tags?.leisure === 'park').length * 5, 10);
+          return Math.round(Math.min(poi + fsq + transit + parks + (isochrone ? 10 : 0), 100));
+        })(),
+      });
+      const res = await fetch(`${baseUrl}/api/report/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      const data = await res.json();
+      setAnalysisResult(data);
+    } catch (e) {
+      console.error('Analysis error:', e);
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [pinData, businessQuery, reportData, mergedPois, crimeData, foursquarePois, isochrone, radius]);
+
 
   // Robust parsing to prevent NaN
   const parseMetric = (val: any, format: 'number' | 'currency' = 'number') => {
@@ -529,6 +592,106 @@ function App() {
                   <p className="text-[10px] text-gray-400 mt-2">Source: Seattle Open Data. Enable Crime layer to see map pins.</p>
                 </div>
               )}
+
+              {/* Competitive Intelligence */}
+              {reportData && (
+                <div className="mt-4 bg-gradient-to-br from-violet-50 to-indigo-50 rounded-lg border border-indigo-100 shadow-sm p-4">
+                  <h4 className="text-sm font-semibold text-indigo-800 mb-2 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-500" /> Competitive Intelligence
+                  </h4>
+                  <p className="text-xs text-indigo-600 mb-3">Describe the business you're considering to get an AI-powered analysis of competitors, synergies, and market gaps.</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={businessQuery}
+                      onChange={e => setBusinessQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleAnalyze()}
+                      placeholder="e.g. specialty coffee shop..."
+                      className="flex-1 text-xs border border-indigo-200 rounded-md px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white placeholder-gray-400"
+                    />
+                    <button
+                      onClick={handleAnalyze}
+                      disabled={analyzing || !businessQuery.trim()}
+                      className="flex items-center gap-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold rounded-md transition-colors whitespace-nowrap"
+                    >
+                      {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      {analyzing ? 'Analyzing...' : 'Analyze'}
+                    </button>
+                  </div>
+
+                  {analysisResult && !analysisResult.error && (
+                    <div className="mt-4 space-y-3">
+                      <div className="bg-white rounded-md p-3 border border-indigo-100">
+                        <div className="flex items-end gap-2 mb-1">
+                          <span className="text-3xl font-bold text-indigo-700">{analysisResult.opportunity_score}</span>
+                          <span className="text-sm text-gray-600 mb-0.5">/100 · {analysisResult.opportunity_label}</span>
+                        </div>
+                        <div className="w-full bg-indigo-50 rounded-full h-2">
+                          <div className={`h-2 rounded-full ${analysisResult.opportunity_score >= 70 ? 'bg-emerald-500' : analysisResult.opportunity_score >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                            style={{ width: `${analysisResult.opportunity_score}%` }} />
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">{analysisResult.demographic_assessment}</p>
+                      </div>
+
+                      {analysisResult.summary && (
+                        <p className="text-xs text-gray-700 leading-relaxed bg-white rounded-md p-3 border border-indigo-100 italic">"{analysisResult.summary}"</p>
+                      )}
+
+                      {analysisResult.competitors?.length > 0 && (
+                        <div className="bg-white rounded-md p-3 border border-red-100">
+                          <p className="text-xs font-semibold text-red-700 mb-2">⚔️ Competitors ({analysisResult.competitors.length})</p>
+                          <div className="space-y-1.5">
+                            {analysisResult.competitors.map((c: any, i: number) => (
+                              <div key={i} className="flex justify-between items-start text-xs">
+                                <div className="flex-1 pr-2">
+                                  <span className="font-medium text-gray-800">{c.name}</span>
+                                  <span className={`ml-1.5 text-[10px] px-1 rounded ${c.threat_level === 'high' ? 'bg-red-100 text-red-700' : c.threat_level === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-500'}`}>{c.threat_level}</span>
+                                  <p className="text-gray-400 text-[10px] mt-0.5 leading-tight">{c.reason}</p>
+                                </div>
+                                <span className="text-gray-400 text-[10px] whitespace-nowrap">{c.distance_m}m</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {analysisResult.complementary?.length > 0 && (
+                        <div className="bg-white rounded-md p-3 border border-emerald-100">
+                          <p className="text-xs font-semibold text-emerald-700 mb-2">🤝 Complementary ({analysisResult.complementary.length})</p>
+                          <div className="space-y-1.5">
+                            {analysisResult.complementary.slice(0, 5).map((c: any, i: number) => (
+                              <div key={i} className="flex justify-between items-start text-xs">
+                                <div className="flex-1 pr-2">
+                                  <span className="font-medium text-gray-800">{c.name}</span>
+                                  <span className={`ml-1.5 text-[10px] px-1 rounded ${c.synergy_level === 'high' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{c.synergy_level}</span>
+                                  <p className="text-gray-400 text-[10px] mt-0.5 leading-tight">{c.reason}</p>
+                                </div>
+                                <span className="text-gray-400 text-[10px] whitespace-nowrap">{c.distance_m}m</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {analysisResult.market_gaps?.length > 0 && (
+                        <div className="bg-white rounded-md p-3 border border-amber-100">
+                          <p className="text-xs font-semibold text-amber-700 mb-1.5">💡 Market Gaps</p>
+                          <ul className="list-disc list-inside space-y-1">
+                            {analysisResult.market_gaps.map((gap: string, i: number) => (
+                              <li key={i} className="text-xs text-gray-600">{gap}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <p className="text-[9px] text-gray-400 text-center">Powered by Google Gemini · Red pins = competitors · Green = complementary</p>
+                    </div>
+                  )}
+                  {analysisResult?.error && (
+                    <p className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">{analysisResult.error}</p>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-16 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl mt-4">
@@ -558,10 +721,28 @@ function App() {
             {...viewState}
             onMove={(evt: ViewStateChangeEvent) => setViewState(evt.viewState)}
             onClick={handleMapClick}
+            onMouseMove={(e: MapLayerMouseEvent) => {
+              if (!showFilters.lightRail) return;
+              const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['light-rail-stations'] });
+              const f = features?.[0];
+              if (f && f.geometry.type === 'Point') {
+                const coords = (f.geometry as any).coordinates;
+                const p = f.properties as any;
+                setHoveredStation({
+                  lng: coords[0], lat: coords[1],
+                  name: p.stop_name || 'Station',
+                  routes: p.route_short_names ? JSON.parse(p.route_short_names) : [],
+                  colors: p.route_colors ? JSON.parse(p.route_colors) : ['#00A550'],
+                });
+              } else {
+                setHoveredStation(null);
+              }
+            }}
+            onMouseLeave={() => setHoveredStation(null)}
             style={{ width: '100%', height: '100%' }}
             mapStyle="mapbox://styles/mapbox/light-v11"
             mapboxAccessToken={MAPBOX_TOKEN}
-            cursor="crosshair"
+            cursor={hoveredStation ? 'pointer' : 'crosshair'}
           >
             <ScaleControl position="bottom-right" />
 
@@ -619,40 +800,79 @@ function App() {
                     'line-opacity': 0.85
                   }}
                 />
+                {/* Station circle pins */}
+                <Layer
+                  id="light-rail-stations"
+                  type="circle"
+                  filter={['==', ['get', 'feature_type'], 'station']}
+                  paint={{
+                    'circle-radius': 6,
+                    'circle-color': ['coalesce', ['get', 'route_color'], '#00A550'],
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-opacity': 0.9
+                  }}
+                />
               </Source>
+            )}
+            {hoveredStation && (
+              <Popup longitude={hoveredStation.lng} latitude={hoveredStation.lat}
+                anchor="bottom" closeButton={false} offset={14}
+                className="z-50"
+              >
+                <div className="text-xs px-1 py-0.5">
+                  <div className="font-bold text-gray-800 mb-1">{hoveredStation.name}</div>
+                  <div className="flex flex-wrap gap-1">
+                    {hoveredStation.routes.map((r, i) => (
+                      <span key={i} className="px-1.5 py-0.5 rounded text-white text-[10px] font-semibold"
+                        style={{ backgroundColor: hoveredStation.colors[i] || '#00A550' }}>
+                        <Train className="inline w-2.5 h-2.5 mr-0.5" />{r}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </Popup>
             )}
 
             {/* Business Markers */}
             {showFilters.commercial && mergedPois.map((bz: any) => {
               if (!bz.lng || !bz.lat) return null;
 
+              // Determine icon and color, with analysis override
+              const nameLower = bz.name?.toLowerCase() || '';
+              const isCompetitor = competitorNames.has(nameLower);
+              const isComplementary = complementaryNames.has(nameLower);
+
               // Determine icon based on categories
               let Icon = Store;
               let iconColor = "text-blue-500";
               const cats = (bz.categories || []).map((c: any) => typeof c === 'string' ? c.toLowerCase() : (c.alias || c.title || '').toLowerCase()).join(" ");
 
-              if (cats.includes("coffee") || cats.includes("cafe")) {
-                Icon = Coffee;
-                iconColor = "text-amber-600";
+              if (isCompetitor) {
+                iconColor = "text-red-500";
+              } else if (isComplementary) {
+                iconColor = "text-emerald-600";
+              } else if (cats.includes("coffee") || cats.includes("cafe")) {
+                Icon = Coffee; iconColor = "text-amber-600";
               } else if (cats.includes("restaurant") || cats.includes("food") || cats.includes("dining")) {
-                Icon = Utensils;
-                iconColor = "text-orange-500";
+                Icon = Utensils; iconColor = "text-orange-500";
               } else if (cats.includes("gym") || cats.includes("active") || cats.includes("fitness")) {
-                Icon = Dumbbell;
-                iconColor = "text-purple-500";
+                Icon = Dumbbell; iconColor = "text-purple-500";
               } else if (cats.includes("school") || cats.includes("education")) {
-                Icon = BookOpen;
-                iconColor = "text-indigo-500";
+                Icon = BookOpen; iconColor = "text-indigo-500";
               }
+
+              const ringClass = isCompetitor ? 'ring-2 ring-red-400' : isComplementary ? 'ring-2 ring-emerald-400' : '';
 
               return (
                 <Marker key={bz.id} longitude={bz.lng} latitude={bz.lat} anchor="bottom">
-                  <div className={`bg-white p-1 rounded-full shadow-md border ${iconColor.replace('text', 'border')} group relative cursor-pointer`}>
+                  <div className={`bg-white p-1 rounded-full shadow-md border ${iconColor.replace('text', 'border')} ${ringClass} group relative cursor-pointer`}>
                     <Icon className={`w-4 h-4 ${iconColor}`} />
-
                     {/* Tooltip on hover */}
-                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[150px] bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
+                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[160px] bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
                       <p className="font-bold truncate">{bz.name}</p>
+                      {isCompetitor && <p className="text-red-300 text-[10px]">⚔️ Competitor</p>}
+                      {isComplementary && <p className="text-emerald-300 text-[10px]">🤝 Complementary</p>}
                       <p>{bz.rating !== 'N/A' ? `⭐ ${bz.rating}` : 'OSM/Mapbox'}</p>
                       <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
                     </div>
@@ -746,7 +966,7 @@ function App() {
           </div>
         )}
       </div>
-    </div>
+    </div >
   );
 }
 

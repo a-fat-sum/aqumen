@@ -76,24 +76,44 @@ def parse_shapes(zf, needed_shape_ids):
         shapes[sid] = [c for _, c in shapes[sid]]
     return shapes
 
-def parse_stops(zf, route_ids, trip_to_route):
-    """Return list of stop features (GeoJSON points) for our routes."""
-    # Find stop_ids used by our trips
-    relevant_stop_ids = set()
+def parse_stops(zf, routes, trip_to_shape, trip_to_route):
+    """Return list of stop features (GeoJSON points) enriched with route info."""
+    # Build trip_id -> route_id mapping
+    trip_to_route_id: dict = {}
+    with zf.open("trips.txt") as f:
+        reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+        for row in reader:
+            if row["route_id"] in routes:
+                trip_to_route_id[row["trip_id"]] = row["route_id"]
+
+    # Build stop_id -> set of route_ids from stop_times
+    stop_to_routes: dict = {}
     with zf.open("stop_times.txt") as f:
         reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
         for row in reader:
-            if row["trip_id"] in trip_to_route:
-                relevant_stop_ids.add(row["stop_id"])
+            route_id = trip_to_route_id.get(row["trip_id"])
+            if route_id:
+                stop_to_routes.setdefault(row["stop_id"], set()).add(route_id)
 
-    # Parse stop details
+    relevant_stop_ids = set(stop_to_routes.keys())
+
+    # Parse stop details and enrich with route info
     stop_features = []
     seen = set()
     with zf.open("stops.txt") as f:
         reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
         for row in reader:
-            if row["stop_id"] in relevant_stop_ids and row["stop_id"] not in seen:
-                seen.add(row["stop_id"])
+            sid = row["stop_id"]
+            if sid in relevant_stop_ids and sid not in seen:
+                seen.add(sid)
+                route_ids_for_stop = list(stop_to_routes.get(sid, []))
+                route_colors = list({routes[rid]["route_color"] for rid in route_ids_for_stop if rid in routes})
+                route_short_names = list({routes[rid]["route_short_name"] for rid in route_ids_for_stop if rid in routes})
+                route_long_names = list({routes[rid]["route_long_name"] for rid in route_ids_for_stop if rid in routes})
+
+                # Primary color = first route's color (for pin styling)
+                primary_color = route_colors[0] if route_colors else "#00A550"
+
                 stop_features.append({
                     "type": "Feature",
                     "geometry": {
@@ -101,13 +121,18 @@ def parse_stops(zf, route_ids, trip_to_route):
                         "coordinates": [float(row["stop_lon"]), float(row["stop_lat"])]
                     },
                     "properties": {
-                        "stop_id": row["stop_id"],
+                        "stop_id": sid,
                         "stop_name": row["stop_name"],
-                        "feature_type": "station"
+                        "feature_type": "station",
+                        "route_color": primary_color,
+                        "route_colors": route_colors,
+                        "route_short_names": route_short_names,
+                        "route_long_names": route_long_names,
                     }
                 })
     print(f"Found {len(stop_features)} unique station stops.")
     return stop_features
+
 
 def build_geojson(routes, shapes, trip_to_route, stop_features):
     features = []
@@ -152,7 +177,7 @@ def main():
     print(f"Processing {len(needed_shapes)} unique route shapes...")
 
     shapes = parse_shapes(zf, needed_shapes)
-    stop_features = parse_stops(zf, set(routes.keys()), {v: k for k, v in zip(trip_to_shape.values(), trip_to_shape.keys())})
+    stop_features = parse_stops(zf, routes, trip_to_shape, trip_to_route)
 
     geojson = build_geojson(routes, shapes, trip_to_route, stop_features)
 

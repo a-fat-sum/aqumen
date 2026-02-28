@@ -226,3 +226,97 @@ async def get_foursquare_pois(lat: float, lng: float, radius: int = 1500):
             logger.error(f"Foursquare API error: {str(e)}")
             return {"error": f"Foursquare request failed: {str(e)}"}
 
+import json as json_lib
+import google.generativeai as genai
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+async def get_competitive_analysis(
+    query: str,
+    lat: float,
+    lng: float,
+    radius: int,
+    pois: list,
+    demographics: dict,
+    crime: dict,
+    walkability_score: int
+) -> dict:
+    """
+    Use Gemini to perform a competitive & complementary business analysis
+    for the proposed business at the given location.
+    """
+    if not GEMINI_API_KEY:
+        return {"error": "GEMINI_API_KEY not configured"}
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    # Build a concise POI summary for the prompt (avoid exceeding context)
+    poi_lines = []
+    for p in pois[:60]:  # Cap at 60 POIs to stay within token budget
+        cats = ", ".join([
+            (c.get("title") or c.get("alias") or c) if isinstance(c, dict) else str(c)
+            for c in (p.get("categories") or [])
+        ])
+        dist = p.get("distance", "?")
+        rating = p.get("rating", "N/A")
+        poi_lines.append(f"- {p.get('name', 'Unknown')} ({cats}) — {dist}m away, rating: {rating}")
+    pois_text = "\n".join(poi_lines) if poi_lines else "No POIs found in radius."
+
+    pop = demographics.get("census_population", "unknown")
+    income = demographics.get("census_median_income", "unknown")
+    tract = demographics.get("census_tract_name", "")
+    crime_total = crime.get("total_incidents", 0) if crime else 0
+    top_crimes = ", ".join([c["name"] for c in (crime.get("categories") or [])[:3]]) if crime else "N/A"
+
+    prompt = f"""You are an expert business location analyst. A user is evaluating opening:
+
+**"{query}"**
+
+Location: ({lat:.4f}, {lng:.4f}), analyzing a {radius}m radius.
+
+## Area Context
+- Census Tract: {tract}
+- Population: {pop}
+- Median Household Income: ${income:,} (if numeric)
+- Aqumen Walkability Index: {walkability_score}/100
+- Crime incidents (12 months): {crime_total} | Top categories: {top_crimes}
+
+## Nearby POIs in Radius
+{pois_text}
+
+## Instructions
+Analyze this location for the proposed business. Respond ONLY with a valid JSON object matching this exact schema:
+
+{{
+  "opportunity_score": <integer 0-100>,
+  "opportunity_label": <"Excellent" | "Strong" | "Moderate" | "Challenging" | "Poor">,
+  "competitors": [
+    {{"name": "...", "distance_m": <int>, "threat_level": "high|medium|low", "reason": "..."}}
+  ],
+  "complementary": [
+    {{"name": "...", "distance_m": <int>, "synergy_level": "high|medium|low", "reason": "..."}}
+  ],
+  "market_gaps": ["...", "..."],
+  "demographic_assessment": "...",
+  "summary": "3-4 sentence overall assessment of this location for the proposed business."
+}}
+
+Only reference businesses that appear in the POI list above. Be specific and opinionated."""
+
+    try:
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    temperature=0.4,
+                )
+            )
+        )
+        result = json_lib.loads(response.text)
+        return result
+    except Exception as e:
+        logger.error(f"Gemini analysis error: {str(e)}")
+        return {"error": f"Analysis failed: {str(e)}"}

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import os
 import asyncio
 from dotenv import load_dotenv
-from services import get_yelp_data, get_osm_data, get_census_data, get_census_from_postgis, get_crime_data, get_foursquare_pois
+from services import get_yelp_data, get_osm_data, get_census_data, get_census_from_postgis, get_crime_data, get_foursquare_pois, get_competitive_analysis
 
 load_dotenv()
 
@@ -28,6 +28,16 @@ class LocationRequest(BaseModel):
     lat: float
     lng: float
     radius: int = 1500
+
+class AnalyzeRequest(BaseModel):
+    lat: float
+    lng: float
+    radius: int = 1500
+    query: str
+    pois: list = []
+    demographics: dict = {}
+    crime: dict = {}
+    walkability_score: int = 0
 
 @app.get("/")
 def read_root():
@@ -228,3 +238,24 @@ async def get_foursquare_endpoint(location: LocationRequest):
         },
         "raw_data": {"foursquare": result.get("places", [])}
     }
+
+@app.post("/api/report/analyze")
+async def analyze_location(request: AnalyzeRequest):
+    """
+    Gemini-powered competitive analysis for a proposed business at the given location.
+    The frontend sends the assembled POI list, demographics, and crime context so we
+    don't need to re-fetch — this keeps the endpoint fast and cheap.
+    """
+    result = await get_competitive_analysis(
+        query=request.query,
+        lat=request.lat,
+        lng=request.lng,
+        radius=request.radius,
+        pois=request.pois,
+        demographics=request.demographics,
+        crime=request.crime,
+        walkability_score=request.walkability_score,
+    )
+    if "error" in result:
+        return {"error": result["error"]}
+    return result
