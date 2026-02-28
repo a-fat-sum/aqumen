@@ -9,7 +9,9 @@ const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 const DEFAULT_VIEW_STATE = {
   longitude: -122.3321, // Seattle Longitude
   latitude: 47.6062,    // Seattle Latitude
-  zoom: 12
+  zoom: 12,
+  pitch: 0,
+  bearing: 0
 };
 
 function App() {
