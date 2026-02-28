@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import Map, { Marker, ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
+import Map, { Marker } from 'react-map-gl';
+import type { ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin } from 'lucide-react';
 
