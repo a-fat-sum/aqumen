@@ -2,7 +2,7 @@ import { useState } from 'react';
 import Map, { Marker } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell } from 'lucide-react';
+import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users } from 'lucide-react';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -130,6 +130,33 @@ function App() {
                       <div className="bg-teal-50/50 p-3 rounded-md border border-teal-100/50">
                         <p className="text-[10px] text-teal-600 font-bold uppercase tracking-wider mb-1">Nodes (Transit, Parks, Schools)</p>
                         <p className="text-2xl font-black text-gray-800">{reportData.metrics?.nearby_transit_and_parks || 0}</p>
+                      </div>
+                    </div>
+
+                    {/* Demographic Meta */}
+                    <div className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm">
+                      <div className="flex items-center gap-3 mb-3">
+                        <Users className="text-purple-500 w-5 h-5" />
+                        <h5 className="font-semibold text-gray-800 text-sm">Local Demographics</h5>
+                      </div>
+                      <p className="text-xs text-gray-400 mb-3 ml-8">Based on ACS 2022 5-Year Data for {reportData.metrics?.census_tract_name || "Region"}</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-purple-50/50 p-3 rounded-md border border-purple-100/50">
+                          <p className="text-[10px] text-purple-600 font-bold uppercase tracking-wider mb-1">Population</p>
+                          <p className="text-2xl font-black text-gray-800">
+                            {reportData.metrics?.census_population !== "N/A"
+                              ? Number(reportData.metrics?.census_population).toLocaleString()
+                              : "N/A"}
+                          </p>
+                        </div>
+                        <div className="bg-emerald-50/50 p-3 rounded-md border border-emerald-100/50">
+                          <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-1">Median Income</p>
+                          <p className="text-2xl font-black text-gray-800">
+                            {reportData.metrics?.census_median_income !== "N/A"
+                              ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}`
+                              : "N/A"}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
