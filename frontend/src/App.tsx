@@ -144,32 +144,35 @@ function App() {
     const fetchYelp = fetch(`${baseUrl}/api/report/yelp`, { method: 'POST', headers, body })
       .then(res => res.json())
       .then(data => {
+        if (!data || data.error) return;
         setReportData((prev: any) => ({
           ...prev,
           metrics: { ...prev.metrics, ...data.metrics },
           raw_data: { ...prev.raw_data, yelp: data.raw_data.yelp }
         }));
-      });
+      }).catch(e => console.error('Yelp fetch error:', e));
 
     const fetchOsm = fetch(`${baseUrl}/api/report/osm`, { method: 'POST', headers, body })
       .then(res => res.json())
       .then(data => {
+        if (!data || data.error) return;
         setReportData((prev: any) => ({
           ...prev,
           metrics: { ...prev.metrics, ...data.metrics },
           raw_data: { ...prev.raw_data, osm: data.raw_data.osm }
         }));
-      });
+      }).catch(e => console.error('OSM fetch error:', e));
 
     const fetchCensus = fetch(`${baseUrl}/api/report/census`, { method: 'POST', headers, body })
       .then(res => res.json())
       .then(data => {
+        if (!data || data.error) return;
         setReportData((prev: any) => ({
           ...prev,
           metrics: { ...prev.metrics, ...data.metrics },
           raw_data: { ...prev.raw_data, census: data.raw_data.census }
         }));
-      });
+      }).catch(e => console.error('Census fetch error:', e));
 
     const fetchCrime = fetch(`${baseUrl}/api/report/crime`, { method: 'POST', headers, body })
       .then(res => res.json())
@@ -723,18 +726,30 @@ function App() {
             onClick={handleMapClick}
             onMouseMove={(e: MapLayerMouseEvent) => {
               if (!showFilters.lightRail) return;
-              const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['light-rail-stations'] });
-              const f = features?.[0];
-              if (f && f.geometry.type === 'Point') {
-                const coords = (f.geometry as any).coordinates;
-                const p = f.properties as any;
-                setHoveredStation({
-                  lng: coords[0], lat: coords[1],
-                  name: p.stop_name || 'Station',
-                  routes: p.route_short_names ? JSON.parse(p.route_short_names) : [],
-                  colors: p.route_colors ? JSON.parse(p.route_colors) : ['#00A550'],
-                });
-              } else {
+              try {
+                const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['light-rail-stations'] });
+                const f = features?.[0];
+                if (f && f.geometry.type === 'Point') {
+                  const coords = (f.geometry as any).coordinates;
+                  const p = f.properties as any;
+
+                  const safeParse = (str: any, fallback: any) => {
+                    if (!str) return fallback;
+                    if (typeof str !== 'string') return str;
+                    try { return JSON.parse(str); } catch { return fallback; }
+                  };
+
+                  setHoveredStation({
+                    lng: coords[0], lat: coords[1],
+                    name: p.stop_name || 'Station',
+                    routes: safeParse(p.route_short_names, []),
+                    colors: safeParse(p.route_colors, ['#00A550']),
+                  });
+                } else {
+                  setHoveredStation(null);
+                }
+              } catch (err) {
+                console.error("Hover check failed:", err);
                 setHoveredStation(null);
               }
             }}

@@ -1,13 +1,13 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from pydantic import BaseModel
-import os
 import asyncio
-from dotenv import load_dotenv
 from services import get_yelp_data, get_osm_data, get_census_data, get_census_from_postgis, get_crime_data, get_foursquare_pois, get_competitive_analysis
-
-load_dotenv()
 
 app = FastAPI()
 

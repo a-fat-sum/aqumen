@@ -1,6 +1,9 @@
 import os
 import httpx
 import logging
+from dotenv import load_dotenv
+load_dotenv()
+
 from supabase import Client
 
 logger = logging.getLogger(__name__)
