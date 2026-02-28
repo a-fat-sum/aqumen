@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import Map, { Marker, Source, Layer } from 'react-map-gl';
-import type { ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
+import type { ViewStateChangeEvent, MapLayerMouseEvent, MapRef } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import * as turf from '@turf/turf';
@@ -23,6 +23,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const mapRef = useRef<MapRef>(null);
+  const [mapboxPois, setMapboxPois] = useState<any[]>([]);
+
   // New UI States
   const [radius, setRadius] = useState<number>(1500); // 1.5km default
   const [poiPage, setPoiPage] = useState<number>(0);
@@ -34,6 +37,7 @@ function App() {
       lat: evt.lngLat.lat
     });
     setReportData(null); // Clear previous report when new pin drops
+    setMapboxPois([]);
     setError(null);
     setPoiPage(0); // Reset pagination
   };
@@ -42,6 +46,7 @@ function App() {
     setViewState(DEFAULT_VIEW_STATE);
     setPinData(null);
     setReportData(null);
+    setMapboxPois([]);
     setError(null);
     setRadius(1500);
     setPoiPage(0);
@@ -71,12 +76,68 @@ function App() {
 
       const data = await response.json();
       setReportData(data);
+
+      // Extract native Mapbox POIs from the rendered map canvas
+      if (mapRef.current && pinData) {
+        try {
+          const mapboxMap = mapRef.current.getMap();
+          const features = mapboxMap.queryRenderedFeatures({ layers: ['poi-label'] });
+
+          const uniqueMapboxPois = new globalThis.Map<string, any>();
+          features.forEach(f => {
+            if (f.geometry.type === 'Point' && f.properties?.name) {
+              // @ts-ignore Turf types with Mapbox GeoJSON
+              const dist = turf.distance([pinData.lng, pinData.lat], f.geometry.coordinates, { units: 'meters' });
+              if (dist <= radius) {
+                if (!uniqueMapboxPois.has(f.properties.name)) {
+                  uniqueMapboxPois.set(f.properties.name, {
+                    id: `mapbox-${uniqueMapboxPois.size}`,
+                    name: f.properties.name,
+                    categories: [{ title: f.properties.type || f.properties.class || 'Local Business' }],
+                    rating: 'N/A',
+                    distance: dist
+                  });
+                }
+              }
+            }
+          });
+          const parsedPois = Array.from(uniqueMapboxPois.values());
+          setMapboxPois(parsedPois);
+        } catch (e) {
+          console.error("Mapbox POI extraction failed:", e);
+        }
+      }
+
     } catch (err: any) {
       setError(err.message || "Failed to connect to backend API.");
     } finally {
       setLoading(false);
     }
   };
+
+  // Merge Yelp data with Mapbox Canvas POIs
+  const mergedPois = useMemo(() => {
+    if (!reportData) return [];
+
+    const yelpBusinesses = reportData.raw_data?.yelp || [];
+    const mergedDict = new globalThis.Map<string, any>();
+
+    // Add Mapbox POIs first
+    mapboxPois.forEach(p => mergedDict.set(p.name.toLowerCase(), p));
+
+    // Override with Yelp POIs (since Yelp has ratings)
+    yelpBusinesses.forEach((bz: any) => {
+      mergedDict.set(bz.name.toLowerCase(), {
+        id: bz.id,
+        name: bz.name,
+        categories: bz.categories,
+        rating: bz.rating,
+        distance: bz.distance
+      });
+    });
+
+    return Array.from(mergedDict.values()).sort((a, b) => a.distance - b.distance);
+  }, [reportData, mapboxPois]);
 
   return (
     <div className="flex h-screen w-full font-sans bg-gray-50">
@@ -200,7 +261,7 @@ function App() {
                     </div>
 
                     {/* Nearest POIs List (Paginated) */}
-                    {reportData?.raw_data?.yelp?.length > 0 && (
+                    {mergedPois.length > 0 && (
                       <div className="pt-4 mt-2 border-t border-gray-100">
                         <div className="flex justify-between items-center mb-3">
                           <h5 className="font-semibold text-gray-800 text-sm flex items-center gap-2">
@@ -208,12 +269,12 @@ function App() {
                             Commercial POIs
                           </h5>
                           <span className="text-xs text-gray-400">
-                            {poiPage * POIS_PER_PAGE + 1}-{Math.min((poiPage + 1) * POIS_PER_PAGE, reportData.raw_data.yelp.length)} of {reportData.raw_data.yelp.length}
+                            {poiPage * POIS_PER_PAGE + 1}-{Math.min((poiPage + 1) * POIS_PER_PAGE, mergedPois.length)} of {mergedPois.length}
                           </span>
                         </div>
 
                         <div className="space-y-2">
-                          {reportData.raw_data.yelp
+                          {mergedPois
                             .slice(poiPage * POIS_PER_PAGE, (poiPage + 1) * POIS_PER_PAGE)
                             .map((bz: any) => (
                               <div key={bz.id} className="bg-white border border-gray-200 p-3 rounded-md shadow-sm flex items-start justify-between">
@@ -222,7 +283,9 @@ function App() {
                                   <p className="text-xs text-gray-500 mt-1">{bz.categories?.[0]?.title || 'Business'}</p>
                                 </div>
                                 <div className="text-right">
-                                  <p className="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">⭐ {bz.rating}</p>
+                                  <p className={`text-xs font-bold px-2 py-0.5 rounded border ${bz.rating === 'N/A' ? 'text-gray-500 bg-gray-50 border-gray-200' : 'text-orange-600 bg-orange-50 border-orange-100'}`}>
+                                    {bz.rating !== 'N/A' ? `⭐ ${bz.rating}` : 'OSM/Mapbox'}
+                                  </p>
                                   <p className="text-[10px] text-gray-400 mt-1">{Math.round(bz.distance)}m away</p>
                                 </div>
                               </div>
@@ -230,7 +293,7 @@ function App() {
                         </div>
 
                         {/* Pagination Controls */}
-                        {reportData.raw_data.yelp.length > POIS_PER_PAGE && (
+                        {mergedPois.length > POIS_PER_PAGE && (
                           <div className="flex justify-between items-center mt-3 pt-2 border-t border-gray-50">
                             <button
                               onClick={() => setPoiPage(p => Math.max(0, p - 1))}
@@ -241,8 +304,8 @@ function App() {
                             </button>
                             <span className="text-xs font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Page {poiPage + 1}</span>
                             <button
-                              onClick={() => setPoiPage(p => Math.min(Math.ceil(reportData.raw_data.yelp.length / POIS_PER_PAGE) - 1, p + 1))}
-                              disabled={(poiPage + 1) * POIS_PER_PAGE >= reportData.raw_data.yelp.length}
+                              onClick={() => setPoiPage(p => Math.min(Math.ceil(mergedPois.length / POIS_PER_PAGE) - 1, p + 1))}
+                              disabled={(poiPage + 1) * POIS_PER_PAGE >= mergedPois.length}
                               className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
                             >
                               <ChevronRight className="w-5 h-5" />
@@ -279,6 +342,7 @@ function App() {
 
         {MAPBOX_TOKEN ? (
           <Map
+            ref={mapRef}
             {...viewState}
             onMove={(evt: ViewStateChangeEvent) => setViewState(evt.viewState)}
             onClick={handleMapClick}
