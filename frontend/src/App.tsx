@@ -99,11 +99,40 @@ function App() {
               )}
 
               {reportData && (
-                <div className="mt-6 p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
-                  <h4 className="font-bold text-gray-800 border-b pb-2 mb-3">API Response Success!</h4>
-                  <pre className="text-xs text-gray-600 bg-gray-50 p-2 rounded overflow-x-auto">
-                    {JSON.stringify(reportData, null, 2)}
-                  </pre>
+                <div className="mt-8">
+                  <h4 className="font-bold text-gray-800 border-b pb-2 mb-4">Micro-Locality Analysis</h4>
+
+                  <div className="space-y-4">
+                    {/* Commercial Meta */}
+                    <div className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm">
+                      <div className="flex items-center gap-3 mb-3">
+                        <Store className="text-blue-500 w-5 h-5" />
+                        <h5 className="font-semibold text-gray-800 text-sm">Commercial Engine</h5>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-blue-50/50 p-3 rounded-md border border-blue-100/50">
+                          <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider mb-1">Nearby POIs</p>
+                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.total_businesses_nearby || 0}</p>
+                        </div>
+                        <div className="bg-orange-50/50 p-3 rounded-md border border-orange-100/50">
+                          <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wider mb-1">Avg Rating</p>
+                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.average_business_rating || 0}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Structural Meta */}
+                    <div className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm">
+                      <div className="flex items-center gap-3 mb-3">
+                        <TreePine className="text-teal-500 w-5 h-5" />
+                        <h5 className="font-semibold text-gray-800 text-sm">Civic & Transit Proxies</h5>
+                      </div>
+                      <div className="bg-teal-50/50 p-3 rounded-md border border-teal-100/50">
+                        <p className="text-[10px] text-teal-600 font-bold uppercase tracking-wider mb-1">Nodes (Transit, Parks, Schools)</p>
+                        <p className="text-2xl font-black text-gray-800">{reportData.metrics?.nearby_transit_and_parks || 0}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -191,22 +220,35 @@ function App() {
               let bgColor = "bg-gray-100";
               let textColor = "text-gray-500";
               let label = "OSM Node";
+              let desc = "";
 
               if (node.tags?.highway === 'bus_stop' || node.tags?.railway === 'station') {
                 Icon = Bus;
                 bgColor = "bg-teal-100";
                 textColor = "text-teal-700";
-                label = node.tags.name || "Transit Stop";
+
+                const stopName = node.tags.name || "Transit Stop";
+                const ref = node.tags.ref ? ` #${node.tags.ref}` : '';
+                label = `${stopName}${ref}`;
+
+                const routes = node.tags.route_ref;
+                if (routes) {
+                  desc = `Served by routes: ${routes}`;
+                } else if (node.tags.operator) {
+                  desc = `Operated by: ${node.tags.operator}`;
+                }
               } else if (node.tags?.leisure === 'park') {
                 Icon = TreePine;
                 bgColor = "bg-green-100";
                 textColor = "text-green-700";
-                label = node.tags.name || "Park";
+                label = node.tags.name || "Public Park";
+                desc = "Green space for recreation.";
               } else if (node.tags?.amenity === 'school') {
                 Icon = BookOpen;
                 bgColor = "bg-indigo-100";
                 textColor = "text-indigo-700";
                 label = node.tags.name || "School";
+                desc = "Educational facility.";
               }
 
               return (
@@ -214,8 +256,10 @@ function App() {
                   <div className={`p-1.5 rounded-full shadow-sm border border-white ${bgColor} group relative cursor-pointer`}>
                     <Icon className={`w-3.5 h-3.5 ${textColor}`} />
 
-                    <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[120px] bg-white text-gray-800 text-xs p-1.5 rounded shadow-lg border border-gray-100 z-50">
-                      <p className="font-semibold truncate">{label}</p>
+                    <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[200px] bg-white text-gray-800 text-xs p-2 rounded shadow-lg border border-gray-100 z-50">
+                      <p className="font-semibold">{label}</p>
+                      {desc && <p className="text-gray-500 mt-1 whitespace-normal leading-relaxed">{desc}</p>}
+                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-gray-100 rotate-45"></div>
                     </div>
                   </div>
                 </Marker>
