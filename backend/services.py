@@ -22,7 +22,7 @@ async def get_yelp_data(lat: float, lng: float, radius: int = 1500):
         "radius": radius,
         "categories": "restaurants,cafes,coffee,gyms,active,shopping",
         "limit": 50,
-        "sort_by": "rating"
+        "sort_by": "distance"
     }
     
     async with httpx.AsyncClient() as client:

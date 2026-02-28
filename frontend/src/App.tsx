@@ -31,6 +31,13 @@ function App() {
   const [poiPage, setPoiPage] = useState<number>(0);
   const POIS_PER_PAGE = 5;
 
+  const [showFilters, setShowFilters] = useState({
+    commercial: true,
+    transit: true,
+    parks: true,
+    civic: true
+  });
+
   const handleMapClick = (evt: MapLayerMouseEvent) => {
     setPinData({
       lng: evt.lngLat.lng,
@@ -83,7 +90,9 @@ function App() {
                   name: f.properties.name,
                   categories: [{ title: f.properties.type || f.properties.class || 'Local Business' }],
                   rating: 'N/A',
-                  distance: dist
+                  distance: dist,
+                  lng: f.geometry.coordinates[0],
+                  lat: f.geometry.coordinates[1]
                 });
               }
             }
@@ -158,12 +167,23 @@ function App() {
         name: bz.name,
         categories: bz.categories,
         rating: bz.rating,
-        distance: bz.distance
+        distance: bz.distance,
+        lng: bz.coordinates?.longitude,
+        lat: bz.coordinates?.latitude
       });
     });
 
     return Array.from(mergedDict.values()).sort((a, b) => a.distance - b.distance);
   }, [reportData, mapboxPois]);
+
+  // Robust parsing to prevent NaN
+  const parseMetric = (val: any, format: 'number' | 'currency' = 'number') => {
+    if (val === undefined || val === null || val === "N/A" || val === "--") return "N/A";
+    const num = Number(val);
+    if (isNaN(num)) return "N/A";
+    if (format === 'currency') return `$${num.toLocaleString()}`;
+    return num.toLocaleString();
+  };
 
   return (
     <div className="flex h-screen w-full font-sans bg-gray-50">
@@ -209,6 +229,39 @@ function App() {
                 </div>
               </div>
 
+              {/* Layer Filters */}
+              {reportData && (
+                <div className="mb-5 bg-white p-3 rounded-md border border-gray-100 shadow-sm">
+                  <h5 className="text-xs font-semibold text-gray-700 mb-2">Map Layers</h5>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setShowFilters(f => ({ ...f, commercial: !f.commercial }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.commercial ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}
+                    >
+                      <Store className="w-3 h-3" /> Commercial
+                    </button>
+                    <button
+                      onClick={() => setShowFilters(f => ({ ...f, transit: !f.transit }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.transit ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-gray-200'}`}
+                    >
+                      <Bus className="w-3 h-3" /> Transit
+                    </button>
+                    <button
+                      onClick={() => setShowFilters(f => ({ ...f, parks: !f.parks }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.parks ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-gray-500 border-gray-200'}`}
+                    >
+                      <TreePine className="w-3 h-3" /> Parks
+                    </button>
+                    <button
+                      onClick={() => setShowFilters(f => ({ ...f, civic: !f.civic }))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${showFilters.civic ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-gray-500 border-gray-200'}`}
+                    >
+                      <BookOpen className="w-3 h-3" /> Civic
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={generateReport}
                 disabled={loading}
@@ -241,14 +294,14 @@ function App() {
                             <div className="absolute inset-0 bg-blue-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-blue-400" /></div>
                           )}
                           <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider mb-1">Nearby POIs</p>
-                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.total_businesses_nearby ?? "--"}</p>
+                          <p className="text-2xl font-black text-gray-800">{parseMetric(reportData.metrics?.total_businesses_nearby)}</p>
                         </div>
                         <div className="bg-orange-50/50 p-3 rounded-md border border-orange-100/50 relative">
                           {loading && reportData.metrics?.average_business_rating === undefined && (
                             <div className="absolute inset-0 bg-orange-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-orange-400" /></div>
                           )}
                           <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wider mb-1">Avg Rating</p>
-                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.average_business_rating ?? "--"}</p>
+                          <p className="text-2xl font-black text-gray-800">{parseMetric(reportData.metrics?.average_business_rating)}</p>
                         </div>
                       </div>
                     </div>
@@ -264,7 +317,7 @@ function App() {
                           <div className="absolute inset-0 bg-teal-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-teal-400" /></div>
                         )}
                         <p className="text-[10px] text-teal-600 font-bold uppercase tracking-wider mb-1">Nodes (Transit, Parks, Schools)</p>
-                        <p className="text-2xl font-black text-gray-800">{reportData.metrics?.nearby_transit_and_parks ?? "--"}</p>
+                        <p className="text-2xl font-black text-gray-800">{parseMetric(reportData.metrics?.nearby_transit_and_parks)}</p>
                       </div>
                     </div>
 
@@ -282,9 +335,7 @@ function App() {
                           )}
                           <p className="text-[10px] text-purple-600 font-bold uppercase tracking-wider mb-1">Population</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_population !== undefined && reportData.metrics?.census_population !== "N/A"
-                              ? Number(reportData.metrics?.census_population).toLocaleString()
-                              : (reportData.metrics?.census_population === "N/A" ? "N/A" : "--")}
+                            {parseMetric(reportData.metrics?.census_population)}
                           </p>
                         </div>
                         <div className="bg-emerald-50/50 p-3 rounded-md border border-emerald-100/50 relative">
@@ -293,9 +344,7 @@ function App() {
                           )}
                           <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-1">Median Income</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_median_income !== undefined && reportData.metrics?.census_median_income !== "N/A"
-                              ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}`
-                              : (reportData.metrics?.census_median_income === "N/A" ? "N/A" : "--")}
+                            {parseMetric(reportData.metrics?.census_median_income, 'currency')}
                           </p>
                         </div>
                       </div>
@@ -416,33 +465,38 @@ function App() {
               </Marker>
             )}
 
-            {/* Yelp Business Markers */}
-            {reportData?.raw_data?.yelp?.map((bz: any) => {
+            {/* Business Markers */}
+            {showFilters.commercial && mergedPois.map((bz: any) => {
+              if (!bz.lng || !bz.lat) return null;
+
               // Determine icon based on categories
               let Icon = Store;
               let iconColor = "text-blue-500";
-              const cats = bz.categories.map((c: any) => c.alias).join(" ");
+              const cats = (bz.categories || []).map((c: any) => typeof c === 'string' ? c.toLowerCase() : (c.alias || c.title || '').toLowerCase()).join(" ");
 
               if (cats.includes("coffee") || cats.includes("cafe")) {
                 Icon = Coffee;
                 iconColor = "text-amber-600";
-              } else if (cats.includes("restaurants") || cats.includes("food")) {
+              } else if (cats.includes("restaurant") || cats.includes("food") || cats.includes("dining")) {
                 Icon = Utensils;
                 iconColor = "text-orange-500";
-              } else if (cats.includes("gym") || cats.includes("active")) {
+              } else if (cats.includes("gym") || cats.includes("active") || cats.includes("fitness")) {
                 Icon = Dumbbell;
                 iconColor = "text-purple-500";
+              } else if (cats.includes("school") || cats.includes("education")) {
+                Icon = BookOpen;
+                iconColor = "text-indigo-500";
               }
 
               return (
-                <Marker key={bz.id} longitude={bz.coordinates.longitude} latitude={bz.coordinates.latitude} anchor="bottom">
+                <Marker key={bz.id} longitude={bz.lng} latitude={bz.lat} anchor="bottom">
                   <div className={`bg-white p-1 rounded-full shadow-md border ${iconColor.replace('text', 'border')} group relative cursor-pointer`}>
                     <Icon className={`w-4 h-4 ${iconColor}`} />
 
                     {/* Tooltip on hover */}
                     <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[150px] bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
                       <p className="font-bold truncate">{bz.name}</p>
-                      <p>⭐ {bz.rating} ({bz.review_count})</p>
+                      <p>{bz.rating !== 'N/A' ? `⭐ ${bz.rating}` : 'OSM/Mapbox'}</p>
                       <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
                     </div>
                   </div>
@@ -465,6 +519,7 @@ function App() {
               let desc = "";
 
               if (node.tags?.highway === 'bus_stop' || node.tags?.railway === 'station') {
+                if (!showFilters.transit) return null;
                 Icon = Bus;
                 bgColor = "bg-teal-100";
                 textColor = "text-teal-700";
@@ -480,17 +535,21 @@ function App() {
                   desc = `Operated by: ${node.tags.operator}`;
                 }
               } else if (node.tags?.leisure === 'park') {
+                if (!showFilters.parks) return null;
                 Icon = TreePine;
                 bgColor = "bg-green-100";
                 textColor = "text-green-700";
                 label = node.tags.name || "Public Park";
                 desc = "Green space for recreation.";
-              } else if (node.tags?.amenity === 'school') {
+              } else if (node.tags?.amenity === 'school' || node.tags?.amenity === 'library' || node.tags?.amenity === 'townhall') {
+                if (!showFilters.civic) return null;
                 Icon = BookOpen;
                 bgColor = "bg-indigo-100";
                 textColor = "text-indigo-700";
-                label = node.tags.name || "School";
-                desc = "Educational facility.";
+                label = node.tags.name || "Civic Institution";
+                desc = "Educational/Civic facility.";
+              } else {
+                return null;
               }
 
               return (
