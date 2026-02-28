@@ -2,16 +2,18 @@ import { useState } from 'react';
 import Map, { Marker } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin } from 'lucide-react';
+import { MapPin, RefreshCcw } from 'lucide-react';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
+const DEFAULT_VIEW_STATE = {
+  longitude: -122.3321, // Seattle Longitude
+  latitude: 47.6062,    // Seattle Latitude
+  zoom: 12
+};
+
 function App() {
-  const [viewState, setViewState] = useState({
-    longitude: -122.3321, // Seattle Longitude
-    latitude: 47.6062,    // Seattle Latitude
-    zoom: 12
-  });
+  const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE);
 
   const [pinData, setPinData] = useState<{ lat: number, lng: number } | null>(null);
   const [reportData, setReportData] = useState<any>(null);
@@ -24,6 +26,13 @@ function App() {
       lat: evt.lngLat.lat
     });
     setReportData(null); // Clear previous report when new pin drops
+    setError(null);
+  };
+
+  const handleResetMap = () => {
+    setViewState(DEFAULT_VIEW_STATE);
+    setPinData(null);
+    setReportData(null);
     setError(null);
   };
 
@@ -107,6 +116,17 @@ function App() {
 
       {/* Map Area */}
       <div className="flex-1 relative bg-gray-200">
+        {/* Floating Reset Button */}
+        <div className="absolute top-4 right-4 z-10">
+          <button
+            onClick={handleResetMap}
+            className="flex items-center gap-2 bg-white text-gray-700 hover:text-blue-600 px-4 py-2 rounded-md shadow-md border border-gray-200 transition-colors text-sm font-medium"
+          >
+            <RefreshCcw className="w-4 h-4" />
+            Reset Map
+          </button>
+        </div>
+
         {MAPBOX_TOKEN ? (
           <Map
             {...viewState}
