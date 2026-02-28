@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
-import Map, { Marker, Source, Layer } from 'react-map-gl';
+import Map, { Marker, Source, Layer, ScaleControl } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent, MapRef } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
@@ -58,58 +58,84 @@ function App() {
     setLoading(true);
     setError(null);
 
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...pinData,
-          radius: radius
-        })
-      });
+    // Initialize empty report data to accept streams
+    setReportData({
+      status: "success",
+      metrics: {},
+      raw_data: { yelp: [], osm: [], census: {} }
+    });
 
-      if (!response.ok) {
-        throw new Error(`API responded with status: ${response.status}`);
-      }
+    // 1. Instantly Extract native Mapbox POIs from the rendered map canvas
+    if (mapRef.current) {
+      try {
+        const mapboxMap = mapRef.current.getMap();
+        const features = mapboxMap.queryRenderedFeatures({ layers: ['poi-label'] });
 
-      const data = await response.json();
-      setReportData(data);
-
-      // Extract native Mapbox POIs from the rendered map canvas
-      if (mapRef.current && pinData) {
-        try {
-          const mapboxMap = mapRef.current.getMap();
-          const features = mapboxMap.queryRenderedFeatures({ layers: ['poi-label'] });
-
-          const uniqueMapboxPois = new globalThis.Map<string, any>();
-          features.forEach(f => {
-            if (f.geometry.type === 'Point' && f.properties?.name) {
-              // @ts-ignore Turf types with Mapbox GeoJSON
-              const dist = turf.distance([pinData.lng, pinData.lat], f.geometry.coordinates, { units: 'meters' });
-              if (dist <= radius) {
-                if (!uniqueMapboxPois.has(f.properties.name)) {
-                  uniqueMapboxPois.set(f.properties.name, {
-                    id: `mapbox-${uniqueMapboxPois.size}`,
-                    name: f.properties.name,
-                    categories: [{ title: f.properties.type || f.properties.class || 'Local Business' }],
-                    rating: 'N/A',
-                    distance: dist
-                  });
-                }
+        const uniqueMapboxPois = new globalThis.Map<string, any>();
+        features.forEach(f => {
+          if (f.geometry.type === 'Point' && f.properties?.name) {
+            // @ts-ignore Turf types with Mapbox GeoJSON
+            const dist = turf.distance([pinData.lng, pinData.lat], f.geometry.coordinates, { units: 'meters' });
+            if (dist <= radius) {
+              if (!uniqueMapboxPois.has(f.properties.name)) {
+                uniqueMapboxPois.set(f.properties.name, {
+                  id: `mapbox-${uniqueMapboxPois.size}`,
+                  name: f.properties.name,
+                  categories: [{ title: f.properties.type || f.properties.class || 'Local Business' }],
+                  rating: 'N/A',
+                  distance: dist
+                });
               }
             }
-          });
-          const parsedPois = Array.from(uniqueMapboxPois.values());
-          setMapboxPois(parsedPois);
-        } catch (e) {
-          console.error("Mapbox POI extraction failed:", e);
-        }
+          }
+        });
+        const parsedPois = Array.from(uniqueMapboxPois.values());
+        setMapboxPois(parsedPois);
+      } catch (e) {
+        console.error("Mapbox POI extraction failed:", e);
       }
+    }
 
+    // 2. Fire Decomposed Backend Requests
+    const headers = { 'Content-Type': 'application/json' };
+    const body = JSON.stringify({ ...pinData, radius });
+    const baseUrl = import.meta.env.VITE_API_URL;
+
+    const fetchYelp = fetch(`${baseUrl}/api/report/yelp`, { method: 'POST', headers, body })
+      .then(res => res.json())
+      .then(data => {
+        setReportData((prev: any) => ({
+          ...prev,
+          metrics: { ...prev.metrics, ...data.metrics },
+          raw_data: { ...prev.raw_data, yelp: data.raw_data.yelp }
+        }));
+      });
+
+    const fetchOsm = fetch(`${baseUrl}/api/report/osm`, { method: 'POST', headers, body })
+      .then(res => res.json())
+      .then(data => {
+        setReportData((prev: any) => ({
+          ...prev,
+          metrics: { ...prev.metrics, ...data.metrics },
+          raw_data: { ...prev.raw_data, osm: data.raw_data.osm }
+        }));
+      });
+
+    const fetchCensus = fetch(`${baseUrl}/api/report/census`, { method: 'POST', headers, body })
+      .then(res => res.json())
+      .then(data => {
+        setReportData((prev: any) => ({
+          ...prev,
+          metrics: { ...prev.metrics, ...data.metrics },
+          raw_data: { ...prev.raw_data, census: data.raw_data.census }
+        }));
+      });
+
+    try {
+      await Promise.allSettled([fetchYelp, fetchOsm, fetchCensus]);
     } catch (err: any) {
-      setError(err.message || "Failed to connect to backend API.");
+      setError("Some data sources failed to load.");
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -188,7 +214,7 @@ function App() {
                 disabled={loading}
                 className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-medium py-2.5 px-4 rounded-md shadow-sm transition-colors flex justify-center items-center">
                 {loading ? (
-                  <span className="animate-pulse">Analyzing Area...</span>
+                  <span className="animate-pulse">Building Dynamic Report...</span>
                 ) : "Generate Report"}
               </button>
 
@@ -210,13 +236,19 @@ function App() {
                         <h5 className="font-semibold text-gray-800 text-sm">Commercial Engine</h5>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-blue-50/50 p-3 rounded-md border border-blue-100/50">
+                        <div className="bg-blue-50/50 p-3 rounded-md border border-blue-100/50 relative">
+                          {loading && reportData.metrics?.total_businesses_nearby === undefined && (
+                            <div className="absolute inset-0 bg-blue-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-blue-400" /></div>
+                          )}
                           <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider mb-1">Nearby POIs</p>
-                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.total_businesses_nearby || 0}</p>
+                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.total_businesses_nearby ?? "--"}</p>
                         </div>
-                        <div className="bg-orange-50/50 p-3 rounded-md border border-orange-100/50">
+                        <div className="bg-orange-50/50 p-3 rounded-md border border-orange-100/50 relative">
+                          {loading && reportData.metrics?.average_business_rating === undefined && (
+                            <div className="absolute inset-0 bg-orange-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-orange-400" /></div>
+                          )}
                           <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wider mb-1">Avg Rating</p>
-                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.average_business_rating || 0}</p>
+                          <p className="text-2xl font-black text-gray-800">{reportData.metrics?.average_business_rating ?? "--"}</p>
                         </div>
                       </div>
                     </div>
@@ -227,9 +259,12 @@ function App() {
                         <TreePine className="text-teal-500 w-5 h-5" />
                         <h5 className="font-semibold text-gray-800 text-sm">Civic & Transit Proxies</h5>
                       </div>
-                      <div className="bg-teal-50/50 p-3 rounded-md border border-teal-100/50">
+                      <div className="bg-teal-50/50 p-3 rounded-md border border-teal-100/50 relative">
+                        {loading && reportData.metrics?.nearby_transit_and_parks === undefined && (
+                          <div className="absolute inset-0 bg-teal-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-teal-400" /></div>
+                        )}
                         <p className="text-[10px] text-teal-600 font-bold uppercase tracking-wider mb-1">Nodes (Transit, Parks, Schools)</p>
-                        <p className="text-2xl font-black text-gray-800">{reportData.metrics?.nearby_transit_and_parks || 0}</p>
+                        <p className="text-2xl font-black text-gray-800">{reportData.metrics?.nearby_transit_and_parks ?? "--"}</p>
                       </div>
                     </div>
 
@@ -241,20 +276,26 @@ function App() {
                       </div>
                       <p className="text-xs text-gray-400 mb-3 ml-8">Based on ACS 2022 5-Year Data for {reportData.metrics?.census_tract_name || "Region"}</p>
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-purple-50/50 p-3 rounded-md border border-purple-100/50">
+                        <div className="bg-purple-50/50 p-3 rounded-md border border-purple-100/50 relative">
+                          {loading && reportData.metrics?.census_population === undefined && (
+                            <div className="absolute inset-0 bg-purple-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-purple-400" /></div>
+                          )}
                           <p className="text-[10px] text-purple-600 font-bold uppercase tracking-wider mb-1">Population</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_population !== "N/A"
+                            {reportData.metrics?.census_population !== undefined && reportData.metrics?.census_population !== "N/A"
                               ? Number(reportData.metrics?.census_population).toLocaleString()
-                              : "N/A"}
+                              : (reportData.metrics?.census_population === "N/A" ? "N/A" : "--")}
                           </p>
                         </div>
-                        <div className="bg-emerald-50/50 p-3 rounded-md border border-emerald-100/50">
+                        <div className="bg-emerald-50/50 p-3 rounded-md border border-emerald-100/50 relative">
+                          {loading && reportData.metrics?.census_median_income === undefined && (
+                            <div className="absolute inset-0 bg-emerald-50/50 flex justify-center items-center rounded-md"><RefreshCcw className="w-4 h-4 animate-spin text-emerald-400" /></div>
+                          )}
                           <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-1">Median Income</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_median_income !== "N/A"
+                            {reportData.metrics?.census_median_income !== undefined && reportData.metrics?.census_median_income !== "N/A"
                               ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}`
-                              : "N/A"}
+                              : (reportData.metrics?.census_median_income === "N/A" ? "N/A" : "--")}
                           </p>
                         </div>
                       </div>
@@ -351,6 +392,8 @@ function App() {
             mapboxAccessToken={MAPBOX_TOKEN}
             cursor="crosshair"
           >
+            <ScaleControl position="bottom-right" />
+
             {/* Draw Radius Circle if pin is dropped */}
             {pinData && (
               <Source id="radius-source" type="geojson" data={turf.circle([pinData.lng, pinData.lat], radius, { steps: 64, units: 'meters' })}>

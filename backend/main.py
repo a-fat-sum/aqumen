@@ -100,3 +100,69 @@ async def generate_report(location: LocationRequest):
         },
         "message": "Successfully analyzed the micro-locality."
     }
+
+@app.post("/api/report/yelp")
+async def get_yelp_endpoint(location: LocationRequest):
+    yelp_response = await get_yelp_data(location.lat, location.lng, radius=location.radius)
+    yelp_businesses = yelp_response.get("businesses", []) if isinstance(yelp_response, dict) else []
+    total_businesses = len(yelp_businesses)
+    avg_rating = sum(b.get("rating", 0.0) for b in yelp_businesses) / total_businesses if total_businesses > 0 else 0.0
+    
+    return {
+        "metrics": {
+            "total_businesses_nearby": total_businesses,
+            "average_business_rating": round(avg_rating, 2),
+        },
+        "raw_data": { "yelp": yelp_businesses }
+    }
+
+@app.post("/api/report/osm")
+async def get_osm_endpoint(location: LocationRequest):
+    osm_response = await get_osm_data(location.lat, location.lng, radius=location.radius)
+    osm_elements = osm_response.get("elements", []) if isinstance(osm_response, dict) else []
+    total_osm_features = len(osm_elements)
+    
+    return {
+        "metrics": {
+            "nearby_transit_and_parks": total_osm_features,
+        },
+        "raw_data": { "osm": osm_elements }
+    }
+
+@app.post("/api/report/census")
+async def get_census_endpoint(location: LocationRequest):
+    census_response = await get_census_data(location.lat, location.lng)
+    population = "N/A"
+    median_income = "N/A"
+    tract_name = "N/A"
+    
+    if isinstance(census_response, dict) and "error" not in census_response:
+        raw_pop = census_response.get("B01003_001E")
+        if raw_pop is not None:
+            try:
+                pop_val = int(raw_pop)
+                population = pop_val if pop_val >= 0 else "N/A"
+            except ValueError:
+                pass
+                
+        raw_inc = census_response.get("B19013_001E")
+        if raw_inc is not None:
+            try:
+                inc_val = int(raw_inc)
+                median_income = inc_val if inc_val >= 0 else "N/A"
+            except ValueError:
+                pass
+        
+        raw_name = census_response.get("NAME", "N/A")
+        if "Census Tract " in raw_name:
+            tract_part = raw_name.split(";")[0].split(",")[0]
+            tract_name = tract_part.replace("Census ", "")
+
+    return {
+        "metrics": {
+            "census_population": population,
+            "census_median_income": median_income,
+            "census_tract_name": tract_name
+        },
+        "raw_data": { "census": census_response }
+    }
