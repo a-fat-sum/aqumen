@@ -2,7 +2,7 @@ import { useState } from 'react';
 import Map, { Marker } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, RefreshCcw } from 'lucide-react';
+import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell } from 'lucide-react';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -142,6 +142,83 @@ function App() {
                 <MapPin className="text-red-500 h-10 w-10 drop-shadow-lg -ml-5 -mt-10" strokeWidth={2.5} fill="white" />
               </Marker>
             )}
+
+            {/* Yelp Business Markers */}
+            {reportData?.raw_data?.yelp?.map((bz: any) => {
+              // Determine icon based on categories
+              let Icon = Store;
+              let iconColor = "text-blue-500";
+              const cats = bz.categories.map((c: any) => c.alias).join(" ");
+
+              if (cats.includes("coffee") || cats.includes("cafe")) {
+                Icon = Coffee;
+                iconColor = "text-amber-600";
+              } else if (cats.includes("restaurants") || cats.includes("food")) {
+                Icon = Utensils;
+                iconColor = "text-orange-500";
+              } else if (cats.includes("gym") || cats.includes("active")) {
+                Icon = Dumbbell;
+                iconColor = "text-purple-500";
+              }
+
+              return (
+                <Marker key={bz.id} longitude={bz.coordinates.longitude} latitude={bz.coordinates.latitude} anchor="bottom">
+                  <div className={`bg-white p-1 rounded-full shadow-md border ${iconColor.replace('text', 'border')} group relative cursor-pointer`}>
+                    <Icon className={`w-4 h-4 ${iconColor}`} />
+
+                    {/* Tooltip on hover */}
+                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[150px] bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
+                      <p className="font-bold truncate">{bz.name}</p>
+                      <p>⭐ {bz.rating} ({bz.review_count})</p>
+                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
+                    </div>
+                  </div>
+                </Marker>
+              );
+            })}
+
+            {/* OSM Structural Markers */}
+            {reportData?.raw_data?.osm?.map((node: any) => {
+              // Extract lat/lng which could be on the object or its center
+              const lat = node.lat || node.center?.lat;
+              const lon = node.lon || node.center?.lon;
+
+              if (!lat || !lon) return null;
+
+              let Icon = MapPin;
+              let bgColor = "bg-gray-100";
+              let textColor = "text-gray-500";
+              let label = "OSM Node";
+
+              if (node.tags?.highway === 'bus_stop' || node.tags?.railway === 'station') {
+                Icon = Bus;
+                bgColor = "bg-teal-100";
+                textColor = "text-teal-700";
+                label = node.tags.name || "Transit Stop";
+              } else if (node.tags?.leisure === 'park') {
+                Icon = TreePine;
+                bgColor = "bg-green-100";
+                textColor = "text-green-700";
+                label = node.tags.name || "Park";
+              } else if (node.tags?.amenity === 'school') {
+                Icon = BookOpen;
+                bgColor = "bg-indigo-100";
+                textColor = "text-indigo-700";
+                label = node.tags.name || "School";
+              }
+
+              return (
+                <Marker key={node.id} longitude={lon} latitude={lat} anchor="center">
+                  <div className={`p-1.5 rounded-full shadow-sm border border-white ${bgColor} group relative cursor-pointer`}>
+                    <Icon className={`w-3.5 h-3.5 ${textColor}`} />
+
+                    <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 hidden group-hover:block w-max max-w-[120px] bg-white text-gray-800 text-xs p-1.5 rounded shadow-lg border border-gray-100 z-50">
+                      <p className="font-semibold truncate">{label}</p>
+                    </div>
+                  </div>
+                </Marker>
+              );
+            })}
           </Map>
         ) : (
           <div className="flex items-center justify-center h-full">
