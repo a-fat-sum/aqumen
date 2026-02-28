@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import Map, { Marker } from 'react-map-gl';
+import Map, { Marker, Source, Layer } from 'react-map-gl';
 import type { ViewStateChangeEvent, MapLayerMouseEvent } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users } from 'lucide-react';
+import { MapPin, RefreshCcw, Coffee, Bus, Store, Utensils, TreePine, BookOpen, Dumbbell, Users, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import * as turf from '@turf/turf';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -21,6 +22,11 @@ function App() {
   const [reportData, setReportData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // New UI States
+  const [radius, setRadius] = useState<number>(1500); // 1.5km default
+  const [poiPage, setPoiPage] = useState<number>(0);
+  const POIS_PER_PAGE = 5;
 
   const handleMapClick = (evt: MapLayerMouseEvent) => {
     setPinData({
@@ -29,6 +35,7 @@ function App() {
     });
     setReportData(null); // Clear previous report when new pin drops
     setError(null);
+    setPoiPage(0); // Reset pagination
   };
 
   const handleResetMap = () => {
@@ -36,6 +43,8 @@ function App() {
     setPinData(null);
     setReportData(null);
     setError(null);
+    setRadius(1500);
+    setPoiPage(0);
   };
 
   const generateReport = async () => {
@@ -50,7 +59,10 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(pinData)
+        body: JSON.stringify({
+          ...pinData,
+          radius: radius
+        })
       });
 
       if (!response.ok) {
@@ -69,20 +81,47 @@ function App() {
   return (
     <div className="flex h-screen w-full font-sans bg-gray-50">
       {/* Sidebar / Report Card Area */}
-      <div className="w-96 bg-white shadow-xl z-10 flex flex-col pt-8 border-r border-gray-200">
+      <div className="w-[450px] shrink-0 bg-white shadow-xl z-10 flex flex-col pt-8 border-r border-gray-200">
         <h1 className="text-2xl font-bold px-6 text-gray-800 tracking-tight">Aqumen</h1>
         <p className="text-sm text-gray-500 px-6 mt-2 pb-6 border-b border-gray-100">
           Drop a pin on the map to generate a micro-locality report card for any business.
         </p>
 
-        <div className="flex-1 overflow-y-auto px-6 mt-6">
+        <div className="flex-1 overflow-y-auto px-6 mt-6 pb-12">
           {pinData ? (
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-5">
-              <h3 className="font-semibold text-blue-900 mb-2">Location Selected</h3>
-              <div className="space-y-1">
-                <p className="text-sm text-blue-700 font-mono">Lat: {pinData.lat.toFixed(4)}</p>
-                <p className="text-sm text-blue-700 font-mono">Lng: {pinData.lng.toFixed(4)}</p>
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="font-semibold text-blue-900 mb-1">Location Selected</h3>
+                  <p className="text-xs text-blue-700 font-mono">Lat: {pinData.lat.toFixed(4)}, Lng: {pinData.lng.toFixed(4)}</p>
+                </div>
               </div>
+              
+              {/* Radius Configuration */}
+              <div className="mb-5 bg-white p-3 rounded-md border border-blue-100/50 shadow-sm">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                    <SlidersHorizontal className="w-3 h-3" />
+                    Search Radius
+                  </label>
+                  <span className="text-xs font-bold text-blue-600">{radius} meters</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="500" 
+                  max="3000" 
+                  step="100"
+                  value={radius} 
+                  onChange={(e) => setRadius(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>500m</span>
+                  <span>1.5km</span>
+                  <span>3km</span>
+                </div>
+              </div>
+
               <button
                 onClick={generateReport}
                 disabled={loading}
@@ -101,7 +140,7 @@ function App() {
               {reportData && (
                 <div className="mt-8">
                   <h4 className="font-bold text-gray-800 border-b pb-2 mb-4">Micro-Locality Analysis</h4>
-
+                  
                   <div className="space-y-4">
                     {/* Commercial Meta */}
                     <div className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm">
@@ -144,21 +183,74 @@ function App() {
                         <div className="bg-purple-50/50 p-3 rounded-md border border-purple-100/50">
                           <p className="text-[10px] text-purple-600 font-bold uppercase tracking-wider mb-1">Population</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_population !== "N/A"
-                              ? Number(reportData.metrics?.census_population).toLocaleString()
+                            {reportData.metrics?.census_population !== "N/A" 
+                              ? Number(reportData.metrics?.census_population).toLocaleString() 
                               : "N/A"}
                           </p>
                         </div>
                         <div className="bg-emerald-50/50 p-3 rounded-md border border-emerald-100/50">
                           <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider mb-1">Median Income</p>
                           <p className="text-2xl font-black text-gray-800">
-                            {reportData.metrics?.census_median_income !== "N/A"
-                              ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}`
+                            {reportData.metrics?.census_median_income !== "N/A" 
+                              ? `$${Number(reportData.metrics?.census_median_income).toLocaleString()}` 
                               : "N/A"}
                           </p>
                         </div>
                       </div>
                     </div>
+
+                    {/* Nearest POIs List (Paginated) */}
+                    {reportData?.raw_data?.yelp?.length > 0 && (
+                      <div className="pt-4 mt-2 border-t border-gray-100">
+                        <div className="flex justify-between items-center mb-3">
+                          <h5 className="font-semibold text-gray-800 text-sm flex items-center gap-2">
+                            <Store className="w-4 h-4 text-blue-500" />
+                            Commercial POIs
+                          </h5>
+                          <span className="text-xs text-gray-400">
+                            {poiPage * POIS_PER_PAGE + 1}-{Math.min((poiPage + 1) * POIS_PER_PAGE, reportData.raw_data.yelp.length)} of {reportData.raw_data.yelp.length}
+                          </span>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          {reportData.raw_data.yelp
+                            .slice(poiPage * POIS_PER_PAGE, (poiPage + 1) * POIS_PER_PAGE)
+                            .map((bz: any, idx: number) => (
+                              <div key={bz.id} className="bg-white border border-gray-200 p-3 rounded-md shadow-sm flex items-start justify-between">
+                                <div>
+                                  <p className="font-bold text-gray-800 text-sm leading-tight">{bz.name}</p>
+                                  <p className="text-xs text-gray-500 mt-1">{bz.categories?.[0]?.title || 'Business'}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">⭐ {bz.rating}</p>
+                                  <p className="text-[10px] text-gray-400 mt-1">{Math.round(bz.distance)}m away</p>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                        
+                        {/* Pagination Controls */}
+                        {reportData.raw_data.yelp.length > POIS_PER_PAGE && (
+                          <div className="flex justify-between items-center mt-3 pt-2 border-t border-gray-50">
+                            <button 
+                              onClick={() => setPoiPage(p => Math.max(0, p - 1))}
+                              disabled={poiPage === 0}
+                              className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                            >
+                              <ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Page {poiPage + 1}</span>
+                            <button 
+                              onClick={() => setPoiPage(p => Math.min(Math.ceil(reportData.raw_data.yelp.length / POIS_PER_PAGE) - 1, p + 1))}
+                              disabled={(poiPage + 1) * POIS_PER_PAGE >= reportData.raw_data.yelp.length}
+                              className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                            >
+                              <ChevronRight className="w-5 h-5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -195,6 +287,22 @@ function App() {
             mapboxAccessToken={MAPBOX_TOKEN}
             cursor="crosshair"
           >
+            {/* Draw Radius Circle if pin is dropped */}
+            {pinData && (
+              <Source id="radius-source" type="geojson" data={turf.circle([pinData.lng, pinData.lat], radius, {steps: 64, units: 'meters'})}>
+                <Layer 
+                  id="radius-layer-fill" 
+                  type="fill" 
+                  paint={{ 'fill-color': '#3b82f6', 'fill-opacity': 0.1 }}
+                />
+                <Layer 
+                  id="radius-layer-line" 
+                  type="line" 
+                  paint={{ 'line-color': '#3b82f6', 'line-width': 2, 'line-opacity': 0.5, 'line-dasharray': [2, 2] }}
+                />
+              </Source>
+            )}
+
             {pinData && (
               <Marker longitude={pinData.lng} latitude={pinData.lat} anchor="bottom">
                 <MapPin className="text-red-500 h-10 w-10 drop-shadow-lg -ml-5 -mt-10" strokeWidth={2.5} fill="white" />
@@ -253,11 +361,11 @@ function App() {
                 Icon = Bus;
                 bgColor = "bg-teal-100";
                 textColor = "text-teal-700";
-
+                
                 const stopName = node.tags.name || "Transit Stop";
                 const ref = node.tags.ref ? ` #${node.tags.ref}` : '';
                 label = `${stopName}${ref}`;
-
+                
                 const routes = node.tags.route_ref;
                 if (routes) {
                   desc = `Served by routes: ${routes}`;
